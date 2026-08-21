@@ -1,0 +1,91 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: "8.3"
+            dependencies: lowest
+            composer-options: --prefer-lowest --prefer-stable
+          - php: "8.4"
+            dependencies: highest
+            composer-options: ""
+          - php: "8.5"
+            dependencies: highest
+            composer-options: ""
+
+    name: PHP ${{ matrix.php }} / ${{ matrix.dependencies }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2.37.2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate Composer metadata
+        run: composer validate --strict --no-interaction
+
+      - name: Install dependencies
+        run: composer update --no-interaction --prefer-dist --no-progress ${{ matrix.composer-options }}
+
+      - name: Audit dependencies
+        if: matrix.dependencies == 'highest'
+        run: composer audit --no-interaction
+
+      - name: Run PHPUnit
+        run: composer test
+
+      - name: Check code style
+        if: matrix.php == '8.5'
+        run: composer lint
+
+      - name: Build distribution archive
+        if: matrix.php == '8.5'
+        run: composer archive --format=zip --dir=.build
+
+      - name: Verify distribution archive
+        if: matrix.php == '8.5'
+        shell: bash
+        run: |
+          archive="$(find .build -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          test -n "$archive"
+
+          archive_files="$(unzip -Z1 "$archive")"
+
+          for required_file in composer.json LICENSE README.md SECURITY.md CHANGELOG.md config/latidoflow.php src/LatidoFlowServiceProvider.php; do
+            grep -qx "$required_file" <<< "$archive_files"
+          done
+
+          if grep -Eq '(^|/)(tests|vendor|\.github|\.build)(/|$)|(^|/)(composer\.lock|phpunit\.xml\.dist|auth\.json|\.env($|\.)|[^/]+\.(pem|key|p12|pfx))$' <<< "$archive_files"; then
+            printf '%s\n' 'The distribution archive contains development-only or internal files.' >&2
+            exit 1
+          fi
+
+          if unzip -p "$archive" | grep -Ei '(@internal|internal[-_ ]only|-----BEGIN [A-Z ]+PRIVATE KEY-----|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|https?://(localhost|127\.0\.0\.1|[^/[:space:]]+\.internal)([:/]|$)|[A-Za-z]:\\(Users|[^\\[:space:]]*AppData)\\|/(Users|home)/[^/[:space:]]+/)' >/dev/null; then
+            printf '%s\n' 'The distribution archive contains a private credential, local path, or internal-only marker.' >&2
+            exit 1
+          fi
+
+      - name: Verify clean Laravel installation
+        if: matrix.php == '8.5'
+        shell: bash
+        run: |
+          archive="$(find .build -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          test -n "$archive"
+          bash tests/Fixtures/Consumer/verify.sh "$archive"

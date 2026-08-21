@@ -1,0 +1,78 @@
+{
+    "name": "latidoflow/laravel",
+    "description": "Heartbeat monitoring for Laravel scheduler and queue workloads with LatidoFlow.",
+    "keywords": [
+        "heartbeat",
+        "laravel",
+        "monitoring",
+        "queue",
+        "scheduler"
+    ],
+    "homepage": "https://www.latidoflow.com",
+    "type": "library",
+    "license": "MIT",
+    "support": {
+        "issues": "https://github.com/Elvesora/latidoflow-laravel/issues",
+        "source": "https://github.com/Elvesora/latidoflow-laravel"
+    },
+    "require": {
+        "php": "^8.3",
+        "illuminate/console": "^13.0",
+        "illuminate/contracts": "^13.0",
+        "illuminate/http": "^13.0",
+        "illuminate/queue": "^13.0",
+        "illuminate/support": "^13.0"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.27",
+        "mockery/mockery": "^1.6.12",
+        "orchestra/testbench": "^11.0",
+        "phpunit/phpunit": "^12.5.8"
+    },
+    "autoload": {
+        "psr-4": {
+            "LatidoFlow\\Laravel\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "LatidoFlow\\Laravel\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "@php vendor/bin/phpunit",
+        "test:coverage": "@php vendor/bin/phpunit --coverage-text",
+        "format": "@php vendor/bin/pint --format agent",
+        "lint": "@php vendor/bin/pint --test"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "LatidoFlow\\Laravel\\LatidoFlowServiceProvider"
+            ]
+        }
+    },
+    "archive": {
+        "exclude": [
+            "/.github",
+            "/tests",
+            "/.editorconfig",
+            "/.gitattributes",
+            "/.gitignore",
+            "/.idea",
+            "/.phpunit.cache",
+            "/.phpunit.result.cache",
+            "/.vscode",
+            "/.build",
+            "/composer.lock",
+            "/phpunit.xml.dist",
+            "/vendor"
+        ]
+    },
+    "config": {
+        "preferred-install": "dist",
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
