@@ -47,6 +47,7 @@ $record = json_encode([
     'method' => (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'),
     'path' => $path,
     'authorized' => $authorized,
+    'authorization_present' => $authorization !== '',
     'payload' => $payload,
 ], JSON_THROW_ON_ERROR).PHP_EOL;
 
@@ -54,8 +55,44 @@ if (file_put_contents($requestLog, $record, FILE_APPEND | LOCK_EX) === false) {
     respond(500, ['message' => 'The fixture request could not be recorded.']);
 }
 
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && $path === '/health/monitoring-pipeline') {
+    if ($authorization !== '') {
+        respond(400, ['message' => 'Public health requests must not contain authorization.']);
+    }
+
+    respond(200, ['ok' => true, 'status' => 'healthy']);
+}
+
 if (! $authorized) {
     respond(401, ['message' => 'Unauthenticated.']);
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $path === '/api/v1/monitors/sync') {
+    $monitors = $payload['monitors'] ?? null;
+
+    if (! is_array($monitors) || $monitors === []) {
+        respond(422, ['message' => 'Monitor definitions are required.']);
+    }
+
+    $syncedMonitors = [];
+
+    foreach ($monitors as $index => $monitor) {
+        if (! is_array($monitor) || ! is_string($monitor['slug'] ?? null) || ($monitor['type'] ?? null) !== 'heartbeat') {
+            respond(422, ['message' => 'A valid heartbeat definition is required.']);
+        }
+
+        $syncedMonitors[] = [
+            'uuid' => sprintf('a6b771c2-13d5-47ad-93ec-%012d', $index + 1),
+            'slug' => $monitor['slug'],
+            'type' => 'heartbeat',
+        ];
+    }
+
+    respond(200, [
+        'project_uuid' => 'ad469be1-8131-4d03-8d22-d8384aec5605',
+        'environment_uuid' => '55f96f65-ee75-439c-8e28-dd215b2472fb',
+        'monitors' => $syncedMonitors,
+    ]);
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $path === '/api/v1/runtime/runs/start') {

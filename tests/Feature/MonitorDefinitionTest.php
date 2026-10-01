@@ -158,7 +158,7 @@ class MonitorDefinitionTest extends TestCase
         $this->assertSame('Europe/Madrid', $payload['monitors'][0]['timezone']);
     }
 
-    public function test_background_schedules_are_synchronized_without_claiming_runtime_reporting(): void
+    public function test_named_background_schedules_are_synchronized_with_automatic_runtime_reporting(): void
     {
         $schedule = new Schedule('UTC');
         $schedule->command('reports:background')
@@ -168,8 +168,40 @@ class MonitorDefinitionTest extends TestCase
 
         $definition = $this->syncPayload($schedule)['monitors'][0];
 
-        $this->assertSame('unsupported_background', $definition['metadata']['runtime_reporting']);
+        $this->assertSame('automatic', $definition['metadata']['runtime_reporting']);
         $this->assertTrue($definition['metadata']['run_in_background']);
+    }
+
+    public function test_background_exec_schedules_report_automatically_when_named(): void
+    {
+        $schedule = new Schedule('UTC');
+        $schedule->exec('php reports.php')->daily()->name('Background exec')->runInBackground();
+
+        $definition = $this->syncPayload($schedule)['monitors'][0];
+
+        $this->assertSame('automatic', $definition['metadata']['runtime_reporting']);
+        $this->assertTrue($definition['metadata']['run_in_background']);
+    }
+
+    public function test_background_schedules_with_a_different_user_do_not_claim_runtime_support(): void
+    {
+        $schedule = new Schedule('UTC');
+        $schedule->command('reports:background')->daily()->name('Background reports')->runInBackground()->user('worker');
+
+        $definition = $this->syncPayload($schedule)['monitors'][0];
+
+        $this->assertSame('unsupported_user', $definition['metadata']['runtime_reporting']);
+        $this->assertTrue($definition['metadata']['run_in_background']);
+    }
+
+    public function test_unnamed_background_schedules_require_a_name(): void
+    {
+        $schedule = new Schedule('UTC');
+        $schedule->command('reports:background')->daily()->runInBackground();
+
+        $definition = $this->syncPayload($schedule)['monitors'][0];
+
+        $this->assertSame('name_required', $definition['metadata']['runtime_reporting']);
     }
 
     public function test_sub_minute_schedules_are_rejected(): void

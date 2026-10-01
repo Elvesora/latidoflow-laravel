@@ -31,13 +31,14 @@ final class MonitorIdentity
     {
         $hasSafeName = filled($event->description);
         $runsInBackground = (bool) $event->runInBackground;
+        $unsupportedUser = $runsInBackground && filled($event->user);
         $name = $hasSafeName
             ? (string) $event->description
             : 'Unnamed Laravel schedule';
         $slug = Str::slug($name);
-        $automatic = $hasSafeName && $slug !== '' && ! $runsInBackground;
-        $runtimeReporting = $runsInBackground
-            ? 'unsupported_background'
+        $automatic = $hasSafeName && $slug !== '' && ! $unsupportedUser;
+        $runtimeReporting = $unsupportedUser
+            ? 'unsupported_user'
             : ($automatic ? 'automatic' : 'name_required');
 
         return [

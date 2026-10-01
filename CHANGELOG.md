@@ -4,7 +4,29 @@ All notable changes to `latidoflow/laravel` will be documented in this file.
 
 The project follows [Semantic Versioning](https://semver.org/).
 
-## 0.1.0 - 2026-08-21
+The entries below describe the current repository source; they do not claim that a tagged or published package release already contains unreleased changes.
+
+## v1.1.0
+
+### Added
+
+- Automatic lifecycle reporting for safely named minute-or-longer `command()` and `exec()` schedules in foreground and supported `runInBackground()` modes; background terminal completion uses `ScheduledBackgroundTaskFinished` and Laravel's propagated hidden `Context`.
+- Shared cache-backed correlation for background output and evidence, with `unsupported_user` for background schedules configured with `user(...)`.
+- `latidoflow:doctor` diagnoses package version, HTTPS origin, token presence, definition construction, cache and queue suitability, public monitoring-pipeline health, and optional mutating definition sync. Blockers return a nonzero exit code. Output is redacted: no tokens, response bodies, headers, secret URLs, local paths, or ingestion-token runtime-evidence reads. `--skip-sync` keeps the run read-only. Pipeline health uses an unauthenticated, redirect-free GET.
+
+### Changed
+
+- Background completion reports only an observed terminal exit code. It does not fabricate a terminal event when `schedule:finish` is unavailable, an after callback throws before Laravel emits `ScheduledBackgroundTaskFinished`, or the definition is gone; unnamed schedules remain non-automatic, sub-minute schedules remain unsupported, and the existing runtime timeout remains the incomplete-run path.
+
+### Fixed
+
+- Corrected the initial release history to identify the published feature set as version 1.0.0.
+- Declared the supported 1.x security line and linked the repository's private vulnerability reporting flow.
+- Redacted configured definition values and custom transport exception text from doctor diagnostics.
+- Checked every runtime queue connection before returning a synchronous-driver warning, so a later missing connection remains a blocker.
+- Extended the clean Laravel distribution check to cover all four commands, preserved configuration, unauthenticated pipeline diagnosis, and definition synchronization.
+
+## 1.0.0 - 2026-08-21
 
 ### Added
 

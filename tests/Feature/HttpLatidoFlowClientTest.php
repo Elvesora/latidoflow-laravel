@@ -2,6 +2,7 @@
 
 namespace LatidoFlow\Laravel\Tests\Feature;
 
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use LatidoFlow\Laravel\Runtime\HttpLatidoFlowClient;
@@ -258,6 +259,94 @@ class HttpLatidoFlowClientTest extends TestCase
         (new HttpLatidoFlowClient)->start($this->reference(), [
             'run_uuid' => '50af68f7-0f73-438d-b7d6-83380ad5c0e9',
         ]);
+    }
+
+    public function test_monitoring_pipeline_is_an_unauthenticated_get_to_the_public_health_contract(): void
+    {
+        Http::fake([
+            'https://latidoflow.example.test/health/monitoring-pipeline' => Http::response([
+                'ok' => true,
+                'status' => 'healthy',
+            ], 200),
+        ]);
+
+        $response = (new HttpLatidoFlowClient)->monitoringPipeline();
+
+        $this->assertTrue($response->successful());
+        $this->assertTrue($response->json('ok'));
+        Http::assertSent(function (Request $request): bool {
+            return $request->method() === 'GET'
+                && $request->url() === 'https://latidoflow.example.test/health/monitoring-pipeline'
+                && $request->hasHeader('Accept', 'application/json')
+                && ! $request->hasHeader('Authorization');
+        });
+    }
+
+    public function test_monitoring_pipeline_never_sends_the_ingestion_token_even_when_one_is_configured(): void
+    {
+        Http::fake([
+            'https://latidoflow.example.test/health/monitoring-pipeline' => Http::response([
+                'ok' => true,
+                'status' => 'healthy',
+            ], 200),
+        ]);
+
+        (new HttpLatidoFlowClient)->monitoringPipeline();
+
+        Http::assertSent(fn (Request $request): bool => ! $request->hasHeader('Authorization')
+            && ! str_contains(json_encode($request->data()) ?: '', 'lf_test_http'));
+    }
+
+    public function test_monitoring_pipeline_does_not_follow_redirects(): void
+    {
+        Http::fake([
+            'https://latidoflow.example.test/health/monitoring-pipeline' => Http::response('', 302, [
+                'Location' => 'https://evil.example.test/steal?token=lf_test_http',
+            ]),
+        ]);
+
+        $response = (new HttpLatidoFlowClient)->monitoringPipeline();
+
+        $this->assertSame(302, $response->status());
+        Http::assertSentCount(1);
+        Http::assertNotSent(fn (Request $request): bool => str_contains($request->url(), 'evil.example.test'));
+    }
+
+    public function test_monitoring_pipeline_timeouts_are_sanitized(): void
+    {
+        config()->set('latidoflow.http.sync.retry_delays_ms', []);
+        Http::fake(function (): never {
+            throw new ConnectionException(
+                'cURL error 28: Operation timed out after 3000 milliseconds with 0 bytes received from https://latidoflow.example.test/health/monitoring-pipeline',
+            );
+        });
+
+        try {
+            (new HttpLatidoFlowClient)->monitoringPipeline();
+            $this->fail('Pipeline timeouts must use a sanitized package exception.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('LatidoFlow request timed out.', $exception->getMessage());
+            $this->assertNull($exception->getPrevious());
+            $this->assertStringNotContainsString('cURL', $exception->getMessage());
+            $this->assertStringNotContainsString('latidoflow.example.test', $exception->getMessage());
+        }
+    }
+
+    public function test_monitoring_pipeline_connection_failures_are_sanitized(): void
+    {
+        config()->set('latidoflow.http.sync.retry_delays_ms', []);
+        Http::fake([
+            'https://latidoflow.example.test/*' => Http::failedConnection('private transport detail'),
+        ]);
+
+        try {
+            (new HttpLatidoFlowClient)->monitoringPipeline();
+            $this->fail('Pipeline connection failures must use a sanitized package exception.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('LatidoFlow could not be reached.', $exception->getMessage());
+            $this->assertNull($exception->getPrevious());
+            $this->assertStringNotContainsString('private transport detail', $exception->getMessage());
+        }
     }
 
     /**

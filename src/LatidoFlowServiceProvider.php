@@ -2,12 +2,14 @@
 
 namespace LatidoFlow\Laravel;
 
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskSkipped;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\ServiceProvider;
+use LatidoFlow\Laravel\Commands\DoctorCommand;
 use LatidoFlow\Laravel\Commands\InstallCommand;
 use LatidoFlow\Laravel\Commands\SyncCommand;
 use LatidoFlow\Laravel\Commands\VerifyCommand;
@@ -45,6 +47,7 @@ class LatidoFlowServiceProvider extends ServiceProvider
                 InstallCommand::class,
                 SyncCommand::class,
                 VerifyCommand::class,
+                DoctorCommand::class,
             ]);
         }
 
@@ -56,6 +59,7 @@ class LatidoFlowServiceProvider extends ServiceProvider
         $events->listen(ScheduledTaskStarting::class, fn (ScheduledTaskStarting $event) => $this->app->make(SchedulerLifecycleReporter::class)->starting($event));
         $events->listen(ScheduledTaskSkipped::class, fn (ScheduledTaskSkipped $event) => $this->app->make(SchedulerLifecycleReporter::class)->skipped($event));
         $events->listen(ScheduledTaskFinished::class, fn (ScheduledTaskFinished $event) => $this->app->make(SchedulerLifecycleReporter::class)->finished($event));
+        $events->listen(ScheduledBackgroundTaskFinished::class, fn (ScheduledBackgroundTaskFinished $event) => $this->app->make(SchedulerLifecycleReporter::class)->backgroundFinished($event));
         $events->listen(ScheduledTaskFailed::class, fn (ScheduledTaskFailed $event) => $this->app->make(SchedulerLifecycleReporter::class)->failed($event));
         $queueEvents = [
             'Illuminate\\Queue\\Events\\JobQueued' => 'queued',

@@ -1,6 +1,8 @@
 # LatidoFlow for Laravel
 
-`latidoflow/laravel` reports evidence from named foreground Laravel schedules and explicitly allowlisted queue jobs to LatidoFlow. It synchronizes heartbeat definitions, reports supported lifecycle state, and can attach bounded numeric business-output metrics or typed semantic evidence without sending command arguments, serialized job payloads, exception text, or response bodies.
+`latidoflow/laravel` reports evidence from safely named Laravel schedules and explicitly allowlisted queue jobs to LatidoFlow. It synchronizes heartbeat definitions, reports supported lifecycle state, and can attach bounded numeric business-output metrics or typed semantic evidence without sending command arguments, serialized job payloads, exception text, or response bodies.
+
+The background-schedule behavior described below is implemented in the current repository source. It does not claim support in a tagged or published package release until that source is released.
 
 ## Requirements
 
@@ -13,7 +15,7 @@
 Install the package and publish its configuration:
 
 ```bash
-composer require latidoflow/laravel
+composer require latidoflow/laravel:v1.1.0
 php artisan latidoflow:install
 ```
 
@@ -70,6 +72,15 @@ php artisan latidoflow:verify
 
 `latidoflow:verify` sends the actual schedule and queue definitions; it does not use a placeholder monitor. A successful verification proves authentication and definition synchronization, not that a workload executed. Use `php artisan latidoflow:sync` for later manual synchronizations; the named hourly command keeps them synchronized automatically.
 
+Diagnose activation blockers without database access or secret-bearing output:
+
+```bash
+php artisan latidoflow:doctor
+php artisan latidoflow:doctor --skip-sync
+```
+
+`latidoflow:doctor` reports pass, warning, and blocker results for the package version, HTTPS origin, token presence, current definitions, cache and queue suitability, the public `/health/monitoring-pipeline` contract, and an optional mutating definition-sync check. It returns a nonzero exit code when any check is a blocker. The pipeline request is unauthenticated and does not follow redirects. The doctor never prints tokens, response bodies, headers, URLs with secrets, or local paths, and it does not use the ingestion token to read runtime evidence. Look up the latest accepted run from Workspace integration or the management API. Use `--skip-sync` for a read-only run that does not mutate definitions.
+
 ## Scheduled workload reporting
 
 Give each monitored schedule a safe, stable name. Each definition keeps its own configured timezone and falls back to `config('app.timezone')` when the event has no timezone:
@@ -85,7 +96,9 @@ Schedule::command('reports:daily')
 
 Unnamed schedules are synchronized under the generic name `Unnamed Laravel schedule` for visibility but do not report automatic runtime lifecycle events. Command arguments and command-derived fingerprints are never included in the synchronized metadata. Multiple unnamed schedules produce duplicate identities and must be given unique names before synchronization.
 
-Schedules configured with `runInBackground()` are also synchronized for due-time visibility, but their definition is marked `unsupported_background` and this package does not report their runtime lifecycle. Use a foreground scheduled command or an allowlisted queue job when lifecycle reporting and business evidence are required.
+Safely named minute-or-longer `command()` and `exec()` schedules report automatic start, filter/pause/overlap skip, and observed terminal success or failure. Foreground schedules complete from Laravel's scheduled-task events. A `runInBackground()` schedule starts in the scheduler process and completes from `ScheduledBackgroundTaskFinished`; Laravel's hidden `Context` carries the execution identity into the child process so the same run can attach cache-backed output and evidence. Background schedules configured with `user(...)` remain synchronized with `unsupported_user` and do not report automatically because sudo-context propagation is not guaranteed across completion. Unnamed schedules remain visible but non-automatic.
+
+The adapter does not fabricate a terminal event when the background process does not expose `schedule:finish`, when an after callback throws before Laravel emits `ScheduledBackgroundTaskFinished`, or when the definition is gone. The existing runtime timeout remains the incomplete-run handling path; this package source does not claim direct production-server timeout proof.
 
 Sub-minute Laravel schedules are not supported. If any scheduled definition uses a seconds-based frequency, synchronization stops before making a request. Use a frequency of one minute or longer.
 
@@ -164,7 +177,7 @@ Evidence may contain strings, booleans, finite numbers, `null`, and nested array
 
 Like `output()`, `evidence()` returns `false` when there is no active monitored execution, the value is invalid, or cache storage is unavailable. Local capture is fail-open and never changes the Laravel workload's exit result. A configured server-side semantic check remains fail-closed: absent or invalid evidence can make the LatidoFlow monitor run fail even when the Laravel workload itself exited successfully.
 
-Laravel runs a foreground scheduled command in a child process and its lifecycle callbacks in the scheduler process. Scheduler output and evidence therefore require a cache store shared between processes, such as `file`, `database`, or `redis`. The `array` and `null` cache drivers are rejected for scheduled-workload capture; queue jobs may use them only when their whole lifecycle remains in one worker process. Set `LATIDOFLOW_CACHE_STORE` to an appropriate shared store when Laravel's default cache is process-local.
+Laravel runs scheduled commands in separate processes and lifecycle callbacks in the scheduler or background-finish process. Scheduled output and evidence therefore require a cache store shared between processes, such as `file`, `database`, or `redis`. The `array` and `null` cache drivers are rejected for scheduled-workload capture; queue jobs may use them only when their whole lifecycle remains in one worker process. Set `LATIDOFLOW_CACHE_STORE` to an appropriate shared store when Laravel's default cache is process-local.
 
 Configure the versioned semantic contract by generated monitor slug:
 
@@ -227,7 +240,8 @@ Definition synchronization and workload runtime reporting use separate HTTP prof
 
 | Profile | Used by | Connect timeout | Request timeout | Default retries |
 | --- | --- | ---: | ---: | --- |
-| Sync | `latidoflow:sync` and `latidoflow:verify` | 1 second | 3 seconds | delays of 100 ms and 500 ms for connection failures, HTTP 408/425/429, and server errors |
+| Sync | `latidoflow:sync`, `latidoflow:verify`, and the mutating `latidoflow:doctor` sync check | 1 second | 3 seconds | delays of 100 ms and 500 ms for connection failures, HTTP 408/425/429, and server errors |
+| Doctor pipeline | unauthenticated `latidoflow:doctor` GET `/health/monitoring-pipeline` | 1 second | 3 seconds | same transient retries as sync, without an Authorization header |
 | Runtime | schedule and queue lifecycle events | 0.5 seconds | 1.5 seconds | none |
 
 The sync commands surface transport and HTTP failures to the operator. Runtime instrumentation is fail-open: reporting failures flow through Laravel exception reporting and do not change the monitored workload outcome. All package requests use the configured application origin and never follow redirects, preventing the workspace token from being forwarded through an unexpected redirect. You may adjust both profiles in the published configuration.
@@ -246,6 +260,32 @@ php artisan latidoflow:verify
 ```
 
 Omit `config:cache` when the deployment intentionally runs without cached configuration. Laravel stores the `queue:restart` signal in the configured cache, so ensure that cache is available and that the process manager starts replacement workers after they exit. Restart any other long-running PHP process that keeps the old configuration in memory. A cron-driven `schedule:run` invocation starts a fresh process; a persistent `schedule:work` process must be restarted.
+
+## Upgrade, rollback, and removal
+
+The doctor command requires version v1.1.0 or later. Before upgrading, retain the application's committed `composer.json` and `composer.lock`, and a protected copy of its customer-owned `config/latidoflow.php`. Never put an environment file or configuration cache containing credentials into a release artifact.
+
+```bash
+composer require latidoflow/laravel:v1.1.0 --no-interaction
+php artisan latidoflow:install --no-interaction
+php artisan config:clear
+php artisan latidoflow:doctor --skip-sync --no-interaction
+php artisan latidoflow:doctor --no-interaction
+```
+
+The install command preserves an existing configuration file. The second doctor command synchronizes current definitions; review `latidoflow:sync --dry-run` before running it. If the application uses cached configuration, rebuild it with `php artisan config:cache`. Restart long-running workers and scheduler processes, then verify a new accepted run in LatidoFlow. A successful doctor run is not execution evidence.
+
+To roll back an upgrade, restore both Composer files from the previous known-good application release and run `composer install --no-interaction --prefer-dist`. Preserve the customer's configuration, clear or rebuild the configuration cache as above, and restart long-running processes. Version 1.0.0 supports `latidoflow:verify` instead of doctor. Recheck real execution after rollback; changing the package does not undo already synchronized server-side definitions or monitoring history.
+
+Before removing the adapter, remove the application's `LatidoFlow` facade calls and package housekeeping schedule so they cannot reference an absent class or command. Keep the underlying business commands and jobs. Then run:
+
+```bash
+composer remove latidoflow/laravel --no-interaction
+php artisan config:clear
+php artisan list --raw
+```
+
+Rebuild configuration if the deployment caches it and restart long-running PHP processes. The four package commands should be absent. Published configuration remains customer-owned; reinstalling the adapter must preserve it. Removing the adapter stops future package telemetry but does not delete hosted monitors, incidents, or history. Review those monitors deliberately to avoid unexpected missing-run alerts.
 
 ## Data boundary
 
@@ -271,7 +311,9 @@ composer lint
 composer audit
 ```
 
-Tests prevent stray HTTP requests and load the service provider through Orchestra Testbench. CI also installs the package without symlinks into a clean Laravel 13 application and verifies package discovery and all three Artisan commands.
+Tests prevent stray HTTP requests and load the service provider through Orchestra Testbench. CI also installs the distribution archive without symlinks into a clean Laravel 13 application and verifies package discovery, all four Artisan commands, non-destructive configuration publication, doctor health and definition sync, and scheduler and queue lifecycle reporting against a local fixture server. This fixture does not prove hosted-service acceptance.
+
+See the [contributing guide](https://github.com/Elvesora/latidoflow-laravel/blob/main/CONTRIBUTING.md) for the release checks and publication procedure. Static analysis is not a release gate in this package; no static-analysis tool is configured.
 
 ## Support and security
 

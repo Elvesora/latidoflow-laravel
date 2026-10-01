@@ -147,9 +147,10 @@ class RuntimeReporterTest extends TestCase
         $this->assertSame([], $client->calls[1]['payload']['evidence']);
     }
 
-    public function test_background_schedules_do_not_start_in_process_runtime_reporting(): void
+    public function test_background_completion_restores_context_and_preserves_output_until_the_child_finishes(): void
     {
-        [$client, $contexts, , $reporter] = $this->schedulerReporter();
+        [$client, $contexts, $outputs, $reporter] = $this->schedulerReporter();
+        $contexts->push(['kind' => 'queue', 'execution_id' => 'outer-execution']);
         $schedule = new Schedule('UTC');
         $task = $schedule->command('reports:background')
             ->daily()
@@ -158,10 +159,185 @@ class RuntimeReporterTest extends TestCase
 
         $reporter->starting(new ScheduledTaskStarting($task));
         $task->callBeforeCallbacks($this->app);
+        $runUuid = $contexts->current()['run_uuid'];
+        $inheritedContext = Context::dehydrate();
+        $this->assertTrue($outputs->output(['records_processed' => 42]));
+        $this->assertTrue($outputs->evidence(['report' => ['status' => 'complete']]));
+        $task->exitCode = 0;
         $reporter->finished(new ScheduledTaskFinished($task, 0.01));
 
+        $this->assertSame(['start'], array_column($client->calls, 'type'));
+        $this->assertSame('outer-execution', $contexts->current()['execution_id']);
+        $this->assertSame(['records_processed' => 42], $outputs->get($runUuid));
+        $this->assertSame(['report' => ['status' => 'complete']], $outputs->getEvidence($runUuid));
+
+        Context::hydrate($inheritedContext);
+        $childReporter = new SchedulerLifecycleReporter($client, new MonitorIdentity, $contexts, $outputs);
+        $childTask = (new Schedule('UTC'))->command('reports:background')->daily()->name('Background reports')->runInBackground();
+        $childTask->exitCode = 0;
+        $childReporter->backgroundFinished(new ScheduledBackgroundTaskFinished($childTask));
+        $childReporter->backgroundFinished(new ScheduledBackgroundTaskFinished($childTask));
+
+        $this->assertSame(['start', 'success'], array_column($client->calls, 'type'));
+        $this->assertSame($runUuid, $client->calls[1]['reference']['run_uuid']);
+        $this->assertSame(0, $client->calls[1]['payload']['exit_code']);
+        $this->assertTrue($client->calls[1]['payload']['metadata']['run_in_background']);
+        $this->assertSame('laravel-schedule:'.$runUuid.':success', $client->calls[1]['payload']['event_idempotency_key']);
+        $this->assertSame(['records_processed' => 42], $client->calls[1]['payload']['output']);
+        $this->assertSame(['report' => ['status' => 'complete']], $client->calls[1]['payload']['evidence']);
+        $this->assertSame([], $outputs->get($runUuid));
+        $this->assertNull($outputs->getEvidence($runUuid));
+        $this->assertSame('outer-execution', $contexts->current()['execution_id']);
+    }
+
+    public function test_background_nonzero_exit_reports_failure_for_the_inherited_run(): void
+    {
+        [$client, $contexts, $outputs, $reporter] = $this->schedulerReporter();
+        $task = (new Schedule('UTC'))->command('reports:background')->daily()->name('Background reports')->runInBackground();
+        $reporter->starting(new ScheduledTaskStarting($task));
+        $task->callBeforeCallbacks($this->app);
+        $runUuid = $contexts->current()['run_uuid'];
+        $inheritedContext = Context::dehydrate();
+        $reporter->finished(new ScheduledTaskFinished($task, 0.01));
         $this->assertNull($contexts->current());
+
+        Context::hydrate($inheritedContext);
+        $task->exitCode = 7;
+        (new SchedulerLifecycleReporter($client, new MonitorIdentity, $contexts, $outputs))
+            ->backgroundFinished(new ScheduledBackgroundTaskFinished($task));
+
+        $this->assertSame(['start', 'fail'], array_column($client->calls, 'type'));
+        $this->assertSame($runUuid, $client->calls[1]['reference']['run_uuid']);
+        $this->assertSame(7, $client->calls[1]['payload']['exit_code']);
+        $this->assertNull($contexts->current());
+    }
+
+    public function test_overlapping_background_runs_keep_separate_contexts_and_output(): void
+    {
+        [$client, $contexts, $outputs, $reporter] = $this->schedulerReporter();
+        $task = (new Schedule('UTC'))->command('reports:background')->daily()->name('Background reports')->runInBackground();
+        $inheritedContexts = [];
+        $runUuids = [];
+
+        foreach ([31, 52] as $recordsProcessed) {
+            $reporter->starting(new ScheduledTaskStarting($task));
+            $task->callBeforeCallbacks($this->app);
+            $runUuids[] = $contexts->current()['run_uuid'];
+            $this->assertTrue($outputs->output(['records_processed' => $recordsProcessed]));
+            $inheritedContexts[] = Context::dehydrate();
+            $reporter->finished(new ScheduledTaskFinished($task, 0.01));
+            $this->assertNull($contexts->current());
+        }
+
+        $this->assertNotSame($runUuids[0], $runUuids[1]);
+        $this->assertSame(['start', 'start'], array_column($client->calls, 'type'));
+
+        foreach ([1, 0] as $index) {
+            Context::hydrate($inheritedContexts[$index]);
+            $task->exitCode = 0;
+            (new SchedulerLifecycleReporter($client, new MonitorIdentity, $contexts, $outputs))
+                ->backgroundFinished(new ScheduledBackgroundTaskFinished($task));
+        }
+
+        $this->assertSame($runUuids[1], $client->calls[2]['reference']['run_uuid']);
+        $this->assertSame(52, $client->calls[2]['payload']['output']['records_processed']);
+        $this->assertSame($runUuids[0], $client->calls[3]['reference']['run_uuid']);
+        $this->assertSame(31, $client->calls[3]['payload']['output']['records_processed']);
+    }
+
+    public function test_background_completion_ignores_missing_malformed_or_unrelated_context_and_unknown_exit_code(): void
+    {
+        [$client, $contexts, $outputs, $reporter] = $this->schedulerReporter();
+        $task = (new Schedule('UTC'))->command('reports:background')->daily()->name('Background reports')->runInBackground();
+        $task->exitCode = 0;
+        $reporter->backgroundFinished(new ScheduledBackgroundTaskFinished($task));
         $this->assertSame([], $client->calls);
+
+        $reporter->starting(new ScheduledTaskStarting($task));
+        $task->callBeforeCallbacks($this->app);
+        $execution = $contexts->current();
+        $reporter->finished(new ScheduledTaskFinished($task, 0.01));
+
+        $unrelatedExecutions = [
+            array_replace($execution, ['kind' => 'queue']),
+            array_replace($execution, ['reference' => ['monitor_slug' => 'another-monitor']]),
+            array_replace($execution, ['schedule_mutex' => 'another-schedule']),
+            array_replace_recursive($execution, ['identity' => ['metadata' => ['run_in_background' => false]]]),
+            array_diff_key($execution, ['execution_id' => true]),
+            array_replace($execution, ['execution_id' => []]),
+            array_replace($execution, ['run_uuid' => null]),
+            array_replace($execution, ['idempotency_key' => '']),
+            array_diff_key($execution, ['started_at' => true]),
+        ];
+
+        foreach ($unrelatedExecutions as $unrelatedExecution) {
+            $contexts->push($unrelatedExecution);
+            $reporter->backgroundFinished(new ScheduledBackgroundTaskFinished($task));
+            $this->assertSame($unrelatedExecution, $contexts->current());
+            $contexts->clear();
+        }
+
+        $contexts->push($execution);
+        $task->exitCode = null;
+        $reporter->backgroundFinished(new ScheduledBackgroundTaskFinished($task));
+        $this->assertSame(['start'], array_column($client->calls, 'type'));
+        $this->assertSame($execution, $contexts->current());
+    }
+
+    public function test_background_filter_and_overlap_skips_do_not_start_a_run(): void
+    {
+        [$client, $contexts, , $reporter] = $this->schedulerReporter();
+        $task = (new Schedule('UTC'))->command('reports:background')->daily()->name('Background reports')->runInBackground()->withoutOverlapping();
+        $reporter->skipped(new ScheduledTaskSkipped($task));
+        $reporter->starting(new ScheduledTaskStarting($task));
+        $reporter->finished(new ScheduledTaskFinished($task, 0.01));
+
+        $this->assertSame(['skipped', 'skipped'], array_column($client->calls, 'type'));
+        $this->assertNull($contexts->current());
+    }
+
+    public function test_background_user_schedules_do_not_start_runtime_reporting(): void
+    {
+        [$client, $contexts, , $reporter] = $this->schedulerReporter();
+        $task = (new Schedule('UTC'))->command('reports:background')->daily()->name('Background reports')->runInBackground()->user('worker');
+        $reporter->starting(new ScheduledTaskStarting($task));
+        $task->callBeforeCallbacks($this->app);
+        $reporter->finished(new ScheduledTaskFinished($task, 0.01));
+        $task->exitCode = 0;
+        $reporter->backgroundFinished(new ScheduledBackgroundTaskFinished($task));
+
+        $this->assertSame([], $client->calls);
+        $this->assertNull($contexts->current());
+    }
+
+    public function test_background_reporting_network_failure_is_fail_open_and_reuses_the_uuid(): void
+    {
+        Exceptions::fake();
+        [$client, $contexts, $outputs, $reporter] = $this->schedulerReporter();
+        $task = (new Schedule('UTC'))->command('reports:background')->daily()->name('Background reports')->runInBackground();
+        $client->throw = true;
+        $reporter->starting(new ScheduledTaskStarting($task));
+        $task->callBeforeCallbacks($this->app);
+        $inheritedContext = Context::dehydrate();
+        $runUuid = $contexts->current()['run_uuid'];
+        $reporter->finished(new ScheduledTaskFinished($task, 0.01));
+        $this->assertNull($contexts->current());
+
+        $client->throw = false;
+        Context::hydrate($inheritedContext);
+        $task->exitCode = 0;
+        $reporter->backgroundFinished(new ScheduledBackgroundTaskFinished($task));
+        $this->assertSame(['start', 'start', 'success'], array_column($client->calls, 'type'));
+        $this->assertSame($runUuid, $client->calls[1]['payload']['run_uuid']);
+        $this->assertSame($client->calls[0]['payload']['event_idempotency_key'], $client->calls[1]['payload']['event_idempotency_key']);
+        $this->assertNull($contexts->current());
+
+        $client->throw = true;
+        Context::hydrate($inheritedContext);
+        $reporter->backgroundFinished(new ScheduledBackgroundTaskFinished($task));
+        $this->assertSame(0, $task->exitCode);
+        $this->assertNull($contexts->current());
+        Exceptions::assertReportedCount(2);
     }
 
     public function test_scheduler_reports_failure_when_an_existing_before_callback_throws(): void
@@ -672,7 +848,7 @@ class RuntimeReporterTest extends TestCase
         $events = $this->app->make('events');
 
         $this->assertTrue($events->hasListeners(ScheduledTaskStarting::class));
-        $this->assertFalse($events->hasListeners(ScheduledBackgroundTaskFinished::class));
+        $this->assertTrue($events->hasListeners(ScheduledBackgroundTaskFinished::class));
         $this->assertTrue($events->hasListeners(JobProcessing::class));
         $this->assertTrue($events->hasListeners(JobAttempted::class));
         $this->assertTrue($events->hasListeners(JobRetryRequested::class));

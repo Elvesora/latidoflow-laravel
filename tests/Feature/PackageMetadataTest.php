@@ -47,6 +47,7 @@ class PackageMetadataTest extends TestCase
         $this->assertArrayHasKey('latidoflow:install', $commands);
         $this->assertArrayHasKey('latidoflow:sync', $commands);
         $this->assertArrayHasKey('latidoflow:verify', $commands);
+        $this->assertArrayHasKey('latidoflow:doctor', $commands);
         $this->assertInstanceOf(HttpLatidoFlowClient::class, $this->app->make(LatidoFlowClient::class));
         $this->assertSame(
             $this->app->make(MonitorDefinitionPayload::class),

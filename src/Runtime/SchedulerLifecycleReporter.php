@@ -2,6 +2,7 @@
 
 namespace LatidoFlow\Laravel\Runtime;
 
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskSkipped;
@@ -86,12 +87,45 @@ final class SchedulerLifecycleReporter
             return;
         }
 
+        if ($event->task->runInBackground) {
+            $this->contexts->remove($execution['execution_id']);
+            unset($this->pending[$event->task], $this->active[$event->task]);
+
+            return;
+        }
+
         if ($event->task->exitCode !== 0) {
             return;
         }
 
         $this->complete($execution, true, 0);
         unset($this->pending[$event->task], $this->active[$event->task]);
+    }
+
+    public function backgroundFinished(ScheduledBackgroundTaskFinished $event): void
+    {
+        $identity = $this->identities->scheduled($event->task);
+        $execution = $this->contexts->current();
+
+        if (! $this->enabled()
+            || ! $identity['automatic']
+            || ! $event->task->runInBackground
+            || $event->task->exitCode === null
+            || ! is_array($execution)
+            || ($execution['kind'] ?? null) !== 'schedule'
+            || data_get($execution, 'identity.metadata.run_in_background') !== true
+            || ($execution['reference'] ?? null) !== $this->identities->reference($identity['slug'])
+            || ($execution['schedule_mutex'] ?? null) !== $event->task->mutexName()) {
+            return;
+        }
+
+        foreach (['execution_id', 'run_uuid', 'idempotency_key', 'started_at'] as $key) {
+            if (! is_string($execution[$key] ?? null) || $execution[$key] === '') {
+                return;
+            }
+        }
+
+        $this->complete($execution, $event->task->exitCode === 0, $event->task->exitCode);
     }
 
     public function failed(ScheduledTaskFailed $event): void
@@ -115,6 +149,8 @@ final class SchedulerLifecycleReporter
         if (! is_array($execution)) {
             return;
         }
+
+        $execution['schedule_mutex'] = $task->mutexName();
 
         $this->safely(function () use (&$execution): void {
             $execution['run_uuid'] = $this->client->start(

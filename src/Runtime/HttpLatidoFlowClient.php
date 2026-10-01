@@ -82,6 +82,33 @@ final class HttpLatidoFlowClient implements LatidoFlowClient
         $this->post('/api/v1/runs/'.rawurlencode($runUuid).'/fail', $payload);
     }
 
+    public function monitoringPipeline(): Response
+    {
+        try {
+            return $this->baseRequest('sync')->get($this->endpoint('/health/monitoring-pipeline'));
+        } catch (ConnectionException $exception) {
+            throw $this->unreachable($exception);
+        }
+    }
+
+    public function applicationOrigin(): string
+    {
+        return rtrim($this->endpoint(''), '/');
+    }
+
+    public function assertTokenConfigured(): void
+    {
+        $token = config('latidoflow.token');
+
+        if (! is_string($token) || $token === '') {
+            throw new RuntimeException('LatidoFlow requests require a token.');
+        }
+
+        if (preg_match('/\A[A-Za-z0-9._~-]{1,512}\z/', $token) !== 1) {
+            throw new RuntimeException('The LatidoFlow token format is invalid.');
+        }
+    }
+
     private function post(string $path, array $payload): Response
     {
         return $this->postUrl($this->endpoint($path), $payload, profile: 'runtime');
@@ -95,8 +122,8 @@ final class HttpLatidoFlowClient implements LatidoFlowClient
     ): Response {
         try {
             $response = $this->request($profile)->post($url, $payload);
-        } catch (ConnectionException) {
-            throw new RuntimeException('LatidoFlow could not be reached.');
+        } catch (ConnectionException $exception) {
+            throw $this->unreachable($exception);
         }
 
         if ($throwOnFailure && ! $response->successful()) {
@@ -108,16 +135,13 @@ final class HttpLatidoFlowClient implements LatidoFlowClient
 
     private function request(string $profile): PendingRequest
     {
-        $token = config('latidoflow.token');
+        $this->assertTokenConfigured();
 
-        if (! is_string($token) || $token === '') {
-            throw new RuntimeException('LatidoFlow requests require a token.');
-        }
+        return $this->baseRequest($profile)->withToken((string) config('latidoflow.token'));
+    }
 
-        if (preg_match('/\A[A-Za-z0-9._~-]{1,512}\z/', $token) !== 1) {
-            throw new RuntimeException('The LatidoFlow token format is invalid.');
-        }
-
+    private function baseRequest(string $profile): PendingRequest
+    {
         $defaultConnectTimeout = $profile === 'sync' ? 1.0 : 0.5;
         $defaultTimeout = $profile === 'sync' ? 3.0 : 1.5;
         $defaultRetryDelays = $profile === 'sync' ? [100, 500] : [];
@@ -125,8 +149,7 @@ final class HttpLatidoFlowClient implements LatidoFlowClient
         $timeout = $this->boundedTimeout($profile, 'timeout_seconds', $defaultTimeout);
         $retryDelays = $this->retryDelays($profile, $defaultRetryDelays);
 
-        $request = Http::withToken($token)
-            ->acceptJson()
+        $request = Http::acceptJson()
             ->withoutRedirecting()
             ->connectTimeout($connectTimeout)
             ->timeout($timeout);
@@ -137,7 +160,7 @@ final class HttpLatidoFlowClient implements LatidoFlowClient
 
         return $request->retry(
             $retryDelays,
-            when: function (Throwable $exception): bool {
+            when: function (?Throwable $exception): bool {
                 if ($exception instanceof ConnectionException) {
                     return true;
                 }
@@ -152,6 +175,17 @@ final class HttpLatidoFlowClient implements LatidoFlowClient
             },
             throw: false,
         );
+    }
+
+    private function unreachable(ConnectionException $exception): RuntimeException
+    {
+        $detail = $exception->getMessage();
+
+        if (stripos($detail, 'timed out') !== false || stripos($detail, 'timeout') !== false) {
+            return new RuntimeException('LatidoFlow request timed out.');
+        }
+
+        return new RuntimeException('LatidoFlow could not be reached.');
     }
 
     private function endpoint(string $path): string
