@@ -6,6 +6,13 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 The entries below describe the current repository source; they do not claim that a tagged or published package release already contains unreleased changes.
 
+## v1.2.0 - 2026-10-04
+
+### Added
+
+- An opt-in `latidoflow` PSR logging driver with a warning default threshold, bounded redacted batches, run correlation, and fail-open flushing at HTTP and queue boundaries.
+- Application log forwarding is an opt-in capability for custom transports; v1.1 `LatidoFlowClient` implementations remain compatible and silently skip log batches when they do not implement it.
+
 ## v1.1.0
 
 ### Added

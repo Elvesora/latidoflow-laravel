@@ -214,6 +214,8 @@ wait_for_fixture_assertion() {
 php artisan latidoflow:doctor --skip-sync --no-interaction
 php "$fixture_directory/assert-report.php" "$request_log" "$unexpected_command_marker" --doctor-read-only
 php artisan latidoflow:doctor --no-interaction
+php artisan latidoflow:fixture-application-logs --no-interaction
+php "$fixture_directory/assert-report.php" "$request_log" "$unexpected_command_marker" --application-logs
 
 LATIDOFLOW_FIXTURE_PHASE=foreground php artisan schedule:run --no-interaction
 php artisan latidoflow:fixture-dispatch-queue --no-interaction

@@ -15,13 +15,15 @@ The background-schedule behavior described below is implemented in the current r
 Install the package and publish its configuration:
 
 ```bash
-composer require latidoflow/laravel:v1.1.0
+composer require latidoflow/laravel:v1.2.0
 php artisan latidoflow:install
 ```
 
 The install command preserves an existing `config/latidoflow.php`. Use `php artisan latidoflow:install --force` only when you intentionally want to overwrite that file, and review any local configuration changes first.
 
 The supported application integration surface is the published `latidoflow` configuration, the `latidoflow:*` Artisan commands, the `LatidoFlow` facade methods documented below, and the `LatidoFlow\Laravel\Contracts\LatidoFlowClient` contract for applications that intentionally replace the transport binding.
+
+Custom transports can continue implementing the v1.1 `LatidoFlowClient` contract. Application log forwarding is an opt-in capability: implement `LatidoFlow\Laravel\Contracts\ApplicationLogClient` on the same transport when the application log channel should be sent to LatidoFlow. Legacy custom transports without that capability continue lifecycle reporting and silently skip application log batches.
 
 Create a workspace integration token from the LatidoFlow `/integrations` page and add it to the application environment:
 
@@ -218,6 +220,28 @@ The package also attaches an `alert_truth` policy when one is configured for the
 
 These contracts are sent as first-class definition fields, never inside monitor metadata. An unconfigured slug omits the field and preserves its server-side contract. Set `semantic_checks` or `alert_truth` to `null` for a slug to explicitly clear that contract. LatidoFlow validates the contract and applies only controls supported by that monitor type; this package does not claim or synthesize independent probe regions for scheduler or queue heartbeats.
 
+## Application log channel
+
+Application forwarding is opt-in and disabled by default. Add the custom driver to `config/logging.php`, include that channel in the application's chosen logging stack, then enable it with environment configuration:
+
+```php
+'channels' => [
+    'latidoflow' => [
+        'driver' => 'latidoflow',
+        'level' => env('LATIDOFLOW_APPLICATION_LOG_LEVEL', 'warning'),
+        'enabled' => env('LATIDOFLOW_APPLICATION_LOGS_ENABLED', false),
+    ],
+],
+```
+
+```dotenv
+LATIDOFLOW_APPLICATION_LOGS_ENABLED=true
+LATIDOFLOW_APPLICATION_LOG_LEVEL=warning
+LATIDOFLOW_APPLICATION_LOG_SOURCE=laravel
+```
+
+The driver filters below the configured severity before transport, sends at most 32 entries and 32 KiB per request, and flushes at HTTP termination and queue job boundaries. Transport failures are reported once through Laravel's exception handler, while the failed batch is dropped without changing the application or job outcome. The reporting path is guarded from re-enqueueing its own log entry. Explicit log messages and context are bounded and redacted before transport. The driver does not capture request bodies, headers, cookies, sessions, serialized jobs, exception objects or traces, or Monolog `extra` data automatically. Configured log-record messages, including messages produced by Laravel exception reporting, are forwarded after redaction. When a log is emitted inside a LatidoFlow-monitored job, its current run UUID is attached without carrying that context into the next job.
+
 ## Configuration
 
 Publish `config/latidoflow.php` with `php artisan latidoflow:install` or:
@@ -266,7 +290,7 @@ Omit `config:cache` when the deployment intentionally runs without cached config
 The doctor command requires version v1.1.0 or later. Before upgrading, retain the application's committed `composer.json` and `composer.lock`, and a protected copy of its customer-owned `config/latidoflow.php`. Never put an environment file or configuration cache containing credentials into a release artifact.
 
 ```bash
-composer require latidoflow/laravel:v1.1.0 --no-interaction
+composer require latidoflow/laravel:v1.2.0 --no-interaction
 php artisan latidoflow:install --no-interaction
 php artisan config:clear
 php artisan latidoflow:doctor --skip-sync --no-interaction
@@ -295,6 +319,8 @@ The package sends the configured workspace token only as the HTTP `Authorization
 - serialized queue payloads;
 - exception messages or traces;
 - LatidoFlow response bodies.
+
+The optional application log channel sends the configured project/environment/source identity plus filtered log messages and explicitly supplied context. Secret-shaped context keys, bearer values, credential-like message fields, and URL credentials or query strings are redacted before transport. Keep application context minimal even with these safeguards.
 
 Semantic evidence can itself contain business data. Include only fields needed by configured checks; do not place secrets, personal data, serialized models, or arbitrary payloads in `evidence()`.
 

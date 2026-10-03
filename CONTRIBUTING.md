@@ -36,8 +36,8 @@ composer test
 composer audit --no-interaction
 php vendor/bin/pint --dirty --format agent
 git diff --check
-composer archive --format=zip --dir=.build/release-v1.1.0 --file=latidoflow-laravel-v1.1.0
-bash tests/Fixtures/Consumer/verify.sh .build/release-v1.1.0/latidoflow-laravel-v1.1.0.zip
+composer archive --format=zip --dir=.build/release-v1.2.0 --file=latidoflow-laravel-v1.2.0
+bash tests/Fixtures/Consumer/verify.sh .build/release-v1.2.0/latidoflow-laravel-v1.2.0.zip
 ```
 
 The CI workflow also checks style and rejects development-only files, private credentials, local paths, and internal-only markers in the distribution. Use the exact named archive above, never the first ZIP found in an old build directory. Static analysis is not a release requirement: no static-analysis dependency or configuration is present. Do not report that gate as passed.

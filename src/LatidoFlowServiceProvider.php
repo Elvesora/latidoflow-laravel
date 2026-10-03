@@ -8,12 +8,16 @@ use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskSkipped;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 use LatidoFlow\Laravel\Commands\DoctorCommand;
 use LatidoFlow\Laravel\Commands\InstallCommand;
 use LatidoFlow\Laravel\Commands\SyncCommand;
 use LatidoFlow\Laravel\Commands\VerifyCommand;
 use LatidoFlow\Laravel\Contracts\LatidoFlowClient;
+use LatidoFlow\Laravel\Logging\ApplicationLogBuffer;
+use LatidoFlow\Laravel\Logging\ApplicationLogSanitizer;
+use LatidoFlow\Laravel\Logging\LatidoFlowApplicationLogHandler;
 use LatidoFlow\Laravel\Runtime\ExecutionContext;
 use LatidoFlow\Laravel\Runtime\HttpLatidoFlowClient;
 use LatidoFlow\Laravel\Runtime\MonitorDefinitionPayload;
@@ -21,6 +25,7 @@ use LatidoFlow\Laravel\Runtime\MonitorIdentity;
 use LatidoFlow\Laravel\Runtime\OutputStore;
 use LatidoFlow\Laravel\Runtime\QueueLifecycleReporter;
 use LatidoFlow\Laravel\Runtime\SchedulerLifecycleReporter;
+use Monolog\Logger;
 
 class LatidoFlowServiceProvider extends ServiceProvider
 {
@@ -32,6 +37,8 @@ class LatidoFlowServiceProvider extends ServiceProvider
         $this->app->singleton(MonitorDefinitionPayload::class);
         $this->app->singleton(ExecutionContext::class);
         $this->app->singleton(OutputStore::class);
+        $this->app->singleton(ApplicationLogSanitizer::class);
+        $this->app->singleton(ApplicationLogBuffer::class);
         $this->app->singleton(SchedulerLifecycleReporter::class);
         $this->app->singleton(QueueLifecycleReporter::class);
     }
@@ -51,7 +58,33 @@ class LatidoFlowServiceProvider extends ServiceProvider
             ]);
         }
 
+        $this->registerApplicationLogDriver();
         $this->registerRuntimeListeners($this->app->make(Dispatcher::class));
+        $this->registerApplicationLogFlushes($this->app->make(Dispatcher::class));
+        $this->app->terminating(fn () => $this->app->make(ApplicationLogBuffer::class)->flush());
+    }
+
+    private function registerApplicationLogDriver(): void
+    {
+        $normalizeLevel = static function (mixed $level): string {
+            $level = is_string($level) ? strtolower($level) : '';
+
+            return in_array($level, [
+                'debug', 'info', 'notice', 'warning', 'error', 'critical', 'alert', 'emergency',
+            ], true) ? $level : 'warning';
+        };
+
+        Log::extend('latidoflow', function ($app, array $config) use ($normalizeLevel): Logger {
+            $logger = new Logger((string) ($config['name'] ?? 'latidoflow'));
+            $logger->pushHandler(new LatidoFlowApplicationLogHandler(
+                $app->make(ApplicationLogBuffer::class),
+                $normalizeLevel($config['level'] ?? config('latidoflow.application_logs.level', 'warning')),
+                (bool) ($config['enabled'] ?? config('latidoflow.application_logs.enabled', false)),
+                (bool) ($config['bubble'] ?? true),
+            ));
+
+            return $logger;
+        });
     }
 
     private function registerRuntimeListeners(Dispatcher $events): void
@@ -78,6 +111,31 @@ class LatidoFlowServiceProvider extends ServiceProvider
             }
 
             $events->listen($eventClass, fn (object $event) => $this->app->make(QueueLifecycleReporter::class)->{$method}($event));
+        }
+    }
+
+    private function registerApplicationLogFlushes(Dispatcher $events): void
+    {
+        $eventClasses = [
+            ScheduledTaskSkipped::class,
+            ScheduledTaskFinished::class,
+            ScheduledBackgroundTaskFinished::class,
+            ScheduledTaskFailed::class,
+            'Illuminate\\Queue\\Events\\JobProcessing',
+            'Illuminate\\Queue\\Events\\JobProcessed',
+            'Illuminate\\Queue\\Events\\JobFailed',
+            'Illuminate\\Queue\\Events\\JobExceptionOccurred',
+            'Illuminate\\Queue\\Events\\JobReleasedAfterException',
+            'Illuminate\\Queue\\Events\\JobAttempted',
+            'Illuminate\\Queue\\Events\\JobTimedOut',
+        ];
+
+        foreach ($eventClasses as $eventClass) {
+            if (! class_exists($eventClass)) {
+                continue;
+            }
+
+            $events->listen($eventClass, fn () => $this->app->make(ApplicationLogBuffer::class)->flush());
         }
     }
 }

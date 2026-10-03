@@ -8,11 +8,12 @@ use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use LatidoFlow\Laravel\Contracts\ApplicationLogClient;
 use LatidoFlow\Laravel\Contracts\LatidoFlowClient;
 use RuntimeException;
 use Throwable;
 
-final class HttpLatidoFlowClient implements LatidoFlowClient
+final class HttpLatidoFlowClient implements ApplicationLogClient, LatidoFlowClient
 {
     private const array PROFILE_LIMITS = [
         'sync' => [
@@ -80,6 +81,11 @@ final class HttpLatidoFlowClient implements LatidoFlowClient
     public function fail(string $runUuid, array $payload): void
     {
         $this->post('/api/v1/runs/'.rawurlencode($runUuid).'/fail', $payload);
+    }
+
+    public function applicationLogs(array $payload): void
+    {
+        $this->post('/api/v1/application-logs', $payload);
     }
 
     public function monitoringPipeline(): Response

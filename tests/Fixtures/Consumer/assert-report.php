@@ -301,11 +301,47 @@ if (($sync['method'] ?? null) !== 'POST'
     failFixture('The mutating doctor did not synchronize the actual consumer schedule and queue definitions.');
 }
 
+$applicationLogRequests = array_values(array_filter(
+    $records,
+    fn (array $record): bool => ($record['path'] ?? null) === '/api/v1/application-logs',
+));
+
+if (count($applicationLogRequests) !== 1) {
+    failFixture('Expected exactly one enabled application-log batch and no disabled application-log request.');
+}
+
+$applicationLogRequest = $applicationLogRequests[0];
+$applicationLogs = nestedValue($applicationLogRequest, 'payload.logs');
+
+if (($applicationLogRequest['method'] ?? null) !== 'POST'
+    || ($applicationLogRequest['authorized'] ?? null) !== true
+    || nestedValue($applicationLogRequest, 'payload.project_slug') !== 'latidoflow-consumer'
+    || nestedValue($applicationLogRequest, 'payload.environment_slug') !== 'ci'
+    || nestedValue($applicationLogRequest, 'payload.source') !== 'laravel'
+    || ! is_array($applicationLogs)
+    || count($applicationLogs) !== 1
+    || ! is_array($applicationLogs[0] ?? null)
+    || nestedValue($applicationLogs[0], 'level') !== 'warning'
+    || nestedValue($applicationLogs[0], 'message') !== 'Release API token=[redacted] was rejected.'
+    || nestedValue($applicationLogs[0], 'context.authorization') !== '[redacted]'
+    || nestedValue($applicationLogs[0], 'context.attempt') !== 2) {
+    failFixture('The enabled application log was not filtered, redacted, or flushed at termination as expected.');
+}
+
+$assertionMode = $argv[3] ?? null;
+
+if ($assertionMode === '--application-logs') {
+    fwrite(STDOUT, 'Clean Laravel application-log driver fixture passed.'.PHP_EOL);
+
+    exit(0);
+}
+
 $records = array_values(array_filter(
     $records,
     fn (array $record): bool => ! in_array($record['path'] ?? null, [
         '/health/monitoring-pipeline',
         '/api/v1/monitors/sync',
+        '/api/v1/application-logs',
     ], true),
 ));
 
@@ -314,8 +350,6 @@ foreach ($records as $record) {
         failFixture('A fixture request was sent without the expected bearer token.');
     }
 }
-
-$assertionMode = $argv[3] ?? null;
 
 if ($assertionMode === '--background-outcomes-pending') {
     assertBackgroundRunsArePending($records, 'latidoflow-consumer-background-success', 1);

@@ -27,6 +27,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use LatidoFlow\Laravel\Commands\VerifyCommand;
+use LatidoFlow\Laravel\Contracts\ApplicationLogClient;
 use LatidoFlow\Laravel\Contracts\LatidoFlowClient;
 use LatidoFlow\Laravel\Facades\LatidoFlow;
 use LatidoFlow\Laravel\Runtime\ExecutionContext;
@@ -917,7 +918,7 @@ class RuntimeReporterTest extends TestCase
     }
 }
 
-final class RecordingLatidoFlowClient implements LatidoFlowClient
+final class RecordingLatidoFlowClient implements ApplicationLogClient, LatidoFlowClient
 {
     /** @var array<int, array<string, mixed>> */
     public array $calls = [];
@@ -959,6 +960,11 @@ final class RecordingLatidoFlowClient implements LatidoFlowClient
     public function fail(string $runUuid, array $payload): void
     {
         $this->record('fail', ['run_uuid' => $runUuid], $payload);
+    }
+
+    public function applicationLogs(array $payload): void
+    {
+        $this->record('application_logs', [], $payload);
     }
 
     /**

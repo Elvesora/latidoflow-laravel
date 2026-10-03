@@ -95,6 +95,10 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $path === '/api/v1/monit
     ]);
 }
 
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $path === '/api/v1/application-logs') {
+    respond(201, ['status' => 'accepted']);
+}
+
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && $path === '/api/v1/runtime/runs/start') {
     $runUuid = $payload['run_uuid'] ?? null;
 

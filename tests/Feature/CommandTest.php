@@ -11,6 +11,7 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use LatidoFlow\Laravel\Commands\InstallCommand;
+use LatidoFlow\Laravel\Contracts\ApplicationLogClient;
 use LatidoFlow\Laravel\Contracts\LatidoFlowClient;
 use LatidoFlow\Laravel\Tests\TestCase;
 use Mockery;
@@ -520,7 +521,7 @@ final class RecordingInstallCommand extends InstallCommand
     }
 }
 
-final class RecordingSyncClient implements LatidoFlowClient
+final class RecordingSyncClient implements ApplicationLogClient, LatidoFlowClient
 {
     /** @var array<int, array<string, mixed>> */
     public array $payloads = [];
@@ -553,4 +554,6 @@ final class RecordingSyncClient implements LatidoFlowClient
     public function success(string $runUuid, array $payload): void {}
 
     public function fail(string $runUuid, array $payload): void {}
+
+    public function applicationLogs(array $payload): void {}
 }

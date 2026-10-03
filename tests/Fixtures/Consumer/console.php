@@ -4,6 +4,7 @@ use App\Jobs\LatidoFlowConsumerJob;
 use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schedule;
 use LatidoFlow\Laravel\Facades\LatidoFlow;
 
@@ -17,6 +18,26 @@ config()->set('latidoflow.queues', [[
 
 Artisan::command('latidoflow:fixture-dispatch-queue', function (): void {
     LatidoFlowConsumerJob::dispatch();
+});
+
+Artisan::command('latidoflow:fixture-application-logs', function (): void {
+    config()->set('latidoflow.application_logs.enabled', false);
+    config()->set('logging.channels.latidoflow', [
+        'driver' => 'latidoflow',
+        'level' => 'warning',
+        'enabled' => false,
+    ]);
+    Log::forgetChannel('latidoflow');
+    Log::channel('latidoflow')->emergency('Disabled application log must stay local.');
+
+    config()->set('latidoflow.application_logs.enabled', true);
+    config()->set('logging.channels.latidoflow.enabled', true);
+    Log::forgetChannel('latidoflow');
+    Log::channel('latidoflow')->info('Enabled information must stay below the threshold.');
+    Log::channel('latidoflow')->warning('Release API token=fixture-secret was rejected.', [
+        'authorization' => 'Bearer fixture-secret',
+        'attempt' => 2,
+    ]);
 });
 
 Artisan::command('latidoflow:fixture-success', function (): void {

@@ -21,6 +21,13 @@ return [
         'cache_store' => env('LATIDOFLOW_CACHE_STORE'),
         'output_ttl_seconds' => 86_400,
     ],
+    'application_logs' => [
+        'enabled' => (bool) env('LATIDOFLOW_APPLICATION_LOGS_ENABLED', false),
+        'level' => env('LATIDOFLOW_APPLICATION_LOG_LEVEL', 'warning'),
+        'source' => env('LATIDOFLOW_APPLICATION_LOG_SOURCE', 'laravel'),
+        'batch_size' => 32,
+        'max_batch_bytes' => 32 * 1024,
+    ],
     'project' => [
         'name' => env('APP_NAME', 'Laravel App'),
         'slug' => env('LATIDOFLOW_PROJECT_SLUG'),
