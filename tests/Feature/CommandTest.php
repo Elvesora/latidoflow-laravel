@@ -409,6 +409,19 @@ class CommandTest extends TestCase
         $this->assertDoctorCommand(0, ['[warning] queue:']);
     }
 
+    public function test_doctor_mentions_unlisted_failure_reporting_without_queue_definitions(): void
+    {
+        $this->configureDoctorHttp();
+        $this->bindDoctorSchedule();
+        config()->set('latidoflow.queues', []);
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+
+        $this->assertDoctorCommand(0, [
+            '[pass] queue:',
+            'unlisted queue-failure reporting is enabled',
+        ], parameters: ['--skip-sync' => true]);
+    }
+
     public function test_doctor_checks_later_queue_blockers_before_returning_a_sync_driver_warning(): void
     {
         $this->configureDoctorHttp();

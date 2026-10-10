@@ -11,9 +11,9 @@ use RuntimeException;
 
 final class MonitorDefinitionPayload
 {
-    public const int MAX_MONITORS = 100;
+    public const MAX_MONITORS = 100;
 
-    public const int MAX_PAYLOAD_BYTES = 32 * 1024;
+    public const MAX_PAYLOAD_BYTES = 32 * 1024;
 
     public function __construct(
         private readonly MonitorIdentity $identities,
@@ -31,6 +31,10 @@ final class MonitorDefinitionPayload
         $queueMonitors = $queueDefinitions
             ->map(fn (array $queue): array => $this->queueMonitor($queue));
         $monitors = $scheduledMonitors->merge($queueMonitors)->values();
+
+        if (config('latidoflow.queue_unlisted_failures.enabled', false) === true) {
+            $monitors->push($this->unlistedQueueFailureMonitor());
+        }
 
         if ($monitors->isEmpty()) {
             throw new RuntimeException(
@@ -156,6 +160,35 @@ final class MonitorDefinitionPayload
             'timeout_seconds' => $timeoutSeconds,
             'metadata' => $identity['metadata'],
         ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function unlistedQueueFailureMonitor(): array
+    {
+        return [
+            'name' => (string) config('latidoflow.queue_unlisted_failures.name', 'Unlisted failed jobs'),
+            'slug' => 'unlisted-failed-jobs',
+            'type' => 'heartbeat',
+            'check_interval_minutes' => $this->boundedInteger(
+                config('latidoflow.defaults.check_interval_minutes', 60),
+                'queue check_interval_minutes',
+                1,
+                10_080,
+            ),
+            'timeout_seconds' => $this->boundedInteger(
+                config('latidoflow.defaults.timeout_seconds', 3600),
+                'queue timeout_seconds',
+                1,
+                604_800,
+            ),
+            'metadata' => [
+                'source' => 'laravel-queue',
+                'source_kind' => 'queue_failures',
+                'runtime_reporting' => 'failures_only',
+            ],
+        ];
     }
 
     /**

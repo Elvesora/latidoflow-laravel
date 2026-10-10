@@ -15,17 +15,38 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - php: "8.3"
+          - php: "8.2"
+            laravel: "^12.0"
+            testbench: "^10.0"
             dependencies: lowest
             composer-options: --prefer-lowest --prefer-stable
+            consumer: true
+          - php: "8.3"
+            laravel: "^12.0"
+            testbench: "^10.0"
+            dependencies: highest
+            composer-options: ""
+            consumer: false
+          - php: "8.3"
+            laravel: "^13.0"
+            testbench: "^11.0"
+            dependencies: lowest
+            composer-options: --prefer-lowest --prefer-stable
+            consumer: false
           - php: "8.4"
+            laravel: "^13.0"
+            testbench: "^11.0"
             dependencies: highest
             composer-options: ""
+            consumer: false
           - php: "8.5"
+            laravel: "^13.0"
+            testbench: "^11.0"
             dependencies: highest
             composer-options: ""
+            consumer: true
 
-    name: PHP ${{ matrix.php }} / ${{ matrix.dependencies }}
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }} / ${{ matrix.dependencies }}
 
     steps:
       - name: Checkout
@@ -42,7 +63,7 @@ jobs:
         run: composer validate --strict --no-interaction
 
       - name: Install dependencies
-        run: composer update --no-interaction --prefer-dist --no-progress ${{ matrix.composer-options }}
+        run: composer update --no-interaction --prefer-dist --no-progress --with "illuminate/support:${{ matrix.laravel }}" --with "orchestra/testbench:${{ matrix.testbench }}" ${{ matrix.composer-options }}
 
       - name: Audit dependencies
         if: matrix.dependencies == 'highest'
@@ -56,7 +77,7 @@ jobs:
         run: composer lint
 
       - name: Build distribution archive
-        if: matrix.php == '8.5'
+        if: matrix.consumer
         run: composer archive --format=zip --dir=.build
 
       - name: Verify distribution archive
@@ -83,8 +104,10 @@ jobs:
           fi
 
       - name: Verify clean Laravel installation
-        if: matrix.php == '8.5'
+        if: matrix.consumer
         shell: bash
+        env:
+          LARAVEL_VERSION: ${{ matrix.laravel }}
         run: |
           archive="$(find .build -maxdepth 1 -type f -name '*.zip' -print -quit)"
           test -n "$archive"

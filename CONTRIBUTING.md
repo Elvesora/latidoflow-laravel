@@ -11,7 +11,7 @@ composer lint
 composer audit
 ```
 
-Use PHP 8.3 or later. Tests must not send real network requests, credentials, command arguments, serialized job payloads, exception text, or response bodies.
+Use PHP 8.2 or later. Tests must not send real network requests, credentials, command arguments, serialized job payloads, exception text, or response bodies.
 
 ## Pull requests
 
@@ -28,7 +28,7 @@ Report sensitive vulnerabilities through the process in [SECURITY.md](SECURITY.m
 Release the standalone `Elvesora/latidoflow-laravel` repository separately from the hosted application. Existing tags are immutable; v1.0.0 identifies `25306be38c8f6ab96ca95e212a22d4c0f9761d1d` and must never be moved. A new public command is an additive minor release under Semantic Versioning. The doctor is introduced in v1.1.0.
 
 1. Review the exact release delta, including untracked source files. Keep unrelated application or package edits out. Confirm the README command examples, supported PHP/Laravel range, security policy, and dated CHANGELOG match the candidate.
-2. Run the checks below from the standalone package. The CI matrix covers PHP 8.3 with lowest supported dependencies and PHP 8.4/8.5 with current dependencies. The local consumer fixture requires Bash, PHP, Composer, curl, and unzip.
+2. Run the checks below from the standalone package. The CI matrix covers PHP 8.2 through 8.5 across Laravel 12 and 13, including the lowest supported dependency sets. The local consumer fixture requires Bash, PHP, Composer, curl, and unzip.
 
 ```bash
 composer validate --strict --no-interaction
@@ -36,16 +36,16 @@ composer test
 composer audit --no-interaction
 php vendor/bin/pint --dirty --format agent
 git diff --check
-composer archive --format=zip --dir=.build/release-v1.2.0 --file=latidoflow-laravel-v1.2.0
-bash tests/Fixtures/Consumer/verify.sh .build/release-v1.2.0/latidoflow-laravel-v1.2.0.zip
+composer archive --format=zip --dir=.build/release-v1.3.0 --file=latidoflow-laravel-v1.3.0
+bash tests/Fixtures/Consumer/verify.sh .build/release-v1.3.0/latidoflow-laravel-v1.3.0.zip
 ```
 
 The CI workflow also checks style and rejects development-only files, private credentials, local paths, and internal-only markers in the distribution. Use the exact named archive above, never the first ZIP found in an old build directory. Static analysis is not a release requirement: no static-analysis dependency or configuration is present. Do not report that gate as passed.
 
-3. Commit only the reviewed candidate after publication is authorized. Require successful CI for that exact commit before creating its new annotated tag and GitHub release. Inspect the remote tag list first; never force-push, reuse, or replace a published version. Let Packagist index the new immutable tag and verify its source reference matches the reviewed commit.
-4. Install the exact released version from Packagist in a fresh Laravel 13 application using an empty Composer home and no custom repository or authentication. Retain PHP, Composer, Laravel, package version and source reference, commands, timestamps, and results without credentials. Check package discovery, all four commands, configuration preservation, and absence of development-only files. A locally built archive or path repository is pre-release fixture evidence, not this public distribution gate.
+3. Commit only the reviewed candidate after publication is authorized. Require successful CI for that exact commit before creating its new annotated, immutable tag and GitHub release. Inspect the remote tag list first; never force-push, reuse, or replace a published version.
+4. Wait for Packagist to show the new version and verify that its source reference matches the reviewed commit. Then run a clean `composer require latidoflow/laravel:vX.Y.Z` in a fresh Laravel 12 or 13 application using an empty Composer home and no custom repository or authentication. Retain PHP, Composer, Laravel, package version and source reference, commands, timestamps, and results without credentials. Check package discovery, all four commands, configuration preservation, and absence of development-only files. A locally built archive or path repository is pre-release fixture evidence, not this public distribution gate.
 5. In an authorized isolated hosted workspace, use a reveal-once ingestion token without retaining it in logs or evidence. Synchronize one safe named foreground workload, run it, and inspect its newly accepted run through the authenticated workspace or separately scoped management API. Record definition sync and actual execution as different gates. Do not use the ingestion token to read runs.
 6. Prove validation and authentication rejection, bounded unreachable-network behavior, and preservation of the workload outcome. Follow the README upgrade/removal procedure to check uninstall, reinstall, and restoration of the previous Composer lockfile. Preserve customer configuration and distinguish adapter rollback from already persisted hosted state.
-7. Deploy matching public instructions only after their referenced package is available. Verify the public Composer/doctor commands, the authenticated onboarding instructions, and the REST fallback. Record hosted deployment identity separately from package version.
+7. Update and deploy public installation instructions only after exact-commit CI is green, the immutable tag exists, Packagist shows the version, the clean version-pinned install succeeds, and hosted runtime proof is recorded. Verify the public Composer/doctor commands, the authenticated onboarding instructions, and the REST fallback. Record hosted deployment identity separately from package version.
 
 Keep production credentials, customer identifiers, request bodies, and raw error responses out of release evidence. Five external customer installations and a sub-ten-minute first-signal target require separately observed onboarding results; local fixtures and internal workspaces do not establish those outcomes.

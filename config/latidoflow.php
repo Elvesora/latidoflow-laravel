@@ -21,6 +21,11 @@ return [
         'cache_store' => env('LATIDOFLOW_CACHE_STORE'),
         'output_ttl_seconds' => 86_400,
     ],
+    'queue_unlisted_failures' => [
+        // Report unlisted queue failures to one aggregate monitor without payloads or exception messages.
+        'enabled' => (bool) env('LATIDOFLOW_REPORT_UNLISTED_JOB_FAILURES', false),
+        'name' => 'Unlisted failed jobs',
+    ],
     'application_logs' => [
         'enabled' => (bool) env('LATIDOFLOW_APPLICATION_LOGS_ENABLED', false),
         'level' => env('LATIDOFLOW_APPLICATION_LOG_LEVEL', 'warning'),

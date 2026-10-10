@@ -15,7 +15,8 @@ use Throwable;
 
 final class HttpLatidoFlowClient implements ApplicationLogClient, LatidoFlowClient
 {
-    private const array PROFILE_LIMITS = [
+    /** @var array<string, array<string, array{float, float}|int>> */
+    private const PROFILE_LIMITS = [
         'sync' => [
             'connect_timeout_seconds' => [0.1, 10.0],
             'timeout_seconds' => [0.2, 30.0],

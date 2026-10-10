@@ -580,6 +580,142 @@ class RuntimeReporterTest extends TestCase
         $this->assertStringNotContainsString('customer-token', $failure['payload']['message']);
     }
 
+    public function test_unlisted_queue_failure_reporting_is_off_by_default(): void
+    {
+        config()->set('latidoflow.queues', []);
+        [$client, , , $reporter] = $this->queueReporter();
+        $job = $this->queueJob(
+            '58376eb7-bf5f-4aca-8630-1a9248fb74e3',
+            failed: true,
+            jobClass: 'App\\Jobs\\UnlistedJob',
+        );
+
+        $reporter->failed(new JobFailed('redis', $job, new RuntimeException('private failure detail')));
+
+        $this->assertSame([], $client->calls);
+    }
+
+    public function test_unlisted_queue_failure_reports_one_bounded_failed_run(): void
+    {
+        config()->set('latidoflow.queues', []);
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+        [$client, , , $reporter] = $this->queueReporter();
+        $job = $this->queueJob(
+            'f02f767c-0ad9-47d7-92b8-a70ef6484cb2',
+            failed: true,
+            attempts: 4,
+            payload: [
+                'uuid' => 'f02f767c-0ad9-47d7-92b8-a70ef6484cb2',
+                'data' => ['command' => 'serialized-private-payload'],
+            ],
+            jobClass: 'App\\Jobs\\UnlistedJob',
+        );
+        $exception = new RuntimeException('secret=customer-token');
+
+        $reporter->failed(new JobFailed('redis', $job, $exception));
+
+        $this->assertSame(['start', 'fail'], array_column($client->calls, 'type'));
+        $this->assertSame('unlisted-failed-jobs', data_get($client->calls[0], 'reference.monitor_slug'));
+        $start = $client->calls[0]['payload'];
+        $failure = $client->calls[1]['payload'];
+        $this->assertTrue(Str::isUuid($start['run_uuid']));
+        $this->assertSame('laravel-queue-unlisted:'.$start['run_uuid'], $start['idempotency_key']);
+        $this->assertSame($start['run_uuid'], data_get($client->calls[1], 'reference.run_uuid'));
+        $this->assertSame($start['idempotency_key'].':failed', $failure['event_idempotency_key']);
+        $this->assertSame('laravel_queue', $start['source']);
+        $this->assertSame('redis', $start['queue_connection']);
+        $this->assertSame('billing', $start['queue_name']);
+        $this->assertSame($start['occurred_at'], $failure['occurred_at']);
+        $this->assertSame([
+            'job_class' => 'App\\Jobs\\UnlistedJob',
+            'connection' => 'redis',
+            'queue' => 'billing',
+            'attempt' => 4,
+        ], $start['metadata']);
+        $this->assertSame('Laravel queue job failed: RuntimeException', $failure['message']);
+        $this->assertSame([
+            'job_class' => 'App\\Jobs\\UnlistedJob',
+            'connection' => 'redis',
+            'queue' => 'billing',
+            'exception_class' => RuntimeException::class,
+        ], $failure['metadata']);
+
+        foreach ($client->calls as $call) {
+            $recordedPayload = json_encode($call['payload'], JSON_THROW_ON_ERROR);
+            $this->assertStringNotContainsString('customer-token', $recordedPayload);
+            $this->assertStringNotContainsString('serialized-private-payload', $recordedPayload);
+        }
+    }
+
+    public function test_unlisted_queue_failure_reporting_requires_runtime_and_token(): void
+    {
+        config()->set('latidoflow.queues', []);
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+        [$client, , , $reporter] = $this->queueReporter();
+        $job = $this->queueJob(
+            '8511a3f4-69b5-43af-85ba-12b54311ed7d',
+            failed: true,
+            jobClass: 'App\\Jobs\\UnlistedJob',
+        );
+
+        config()->set('latidoflow.runtime.enabled', false);
+        $reporter->failed(new JobFailed('redis', $job, new RuntimeException('runtime disabled')));
+        $this->assertSame([], $client->calls);
+
+        config()->set('latidoflow.runtime.enabled', true);
+        config()->set('latidoflow.token', '');
+        $reporter->failed(new JobFailed('redis', $job, new RuntimeException('token missing')));
+        $this->assertSame([], $client->calls);
+    }
+
+    public function test_allowlisted_job_classes_never_use_unlisted_aggregate_reporting(): void
+    {
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+        [$client, , , $reporter] = $this->queueReporter();
+        $job = $this->queueJob('74f5a2c7-c0ae-46fa-894b-4495cd7e7c08', failed: true);
+
+        $reporter->processing(new JobProcessing('redis', $job));
+        $reporter->failed(new JobFailed('redis', $job, new RuntimeException('allowlisted failure')));
+
+        $this->assertSame(['start', 'fail'], array_column($client->calls, 'type'));
+        $this->assertSame('invoice-exports', data_get($client->calls[0], 'reference.monitor_slug'));
+        $this->assertNotSame('unlisted-failed-jobs', data_get($client->calls[0], 'reference.monitor_slug'));
+
+        config()->set('latidoflow.queues.0.queue', 'another-queue');
+        [$mismatchedClient, , , $mismatchedReporter] = $this->queueReporter();
+        $mismatchedReporter->failed(new JobFailed('redis', $job, new RuntimeException('queue mismatch')));
+        $this->assertSame([], $mismatchedClient->calls);
+    }
+
+    public function test_normalized_allowlisted_job_class_does_not_report_an_unlisted_failure_on_another_queue(): void
+    {
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+        config()->set('latidoflow.queues.0.job_class', ' \\App\\Jobs\\ExportInvoices ');
+        config()->set('latidoflow.queues.0.queue', 'another-queue');
+        [$client, , , $reporter] = $this->queueReporter();
+        $job = $this->queueJob('1bf034f1-8ea1-42d1-9fc3-1dfd926009d3', failed: true);
+
+        $reporter->failed(new JobFailed('redis', $job, new RuntimeException('allowlisted queue mismatch')));
+
+        $this->assertSame([], $client->calls);
+    }
+
+    public function test_genuinely_unlisted_job_class_still_reports_an_aggregate_failure(): void
+    {
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+        [$client, , , $reporter] = $this->queueReporter();
+        $job = $this->queueJob(
+            'a1c1c3a4-b145-4717-98b2-630db4f6d191',
+            failed: true,
+            jobClass: 'App\\Jobs\\UnlistedJob',
+        );
+
+        $reporter->failed(new JobFailed('redis', $job, new RuntimeException('unlisted failure')));
+
+        $this->assertSame(['start', 'fail'], array_column($client->calls, 'type'));
+        $this->assertSame('unlisted-failed-jobs', data_get($client->calls[0], 'reference.monitor_slug'));
+    }
+
     public function test_output_helper_rejects_invalid_metrics_and_transport_failures_remain_fail_open(): void
     {
         [$client, , , $reporter] = $this->schedulerReporter();

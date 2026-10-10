@@ -13,7 +13,7 @@ use Throwable;
 
 final class ActivationDoctor
 {
-    public const string EVIDENCE_INSTRUCTION = 'Look up the latest accepted run from Workspace integration or the management API. The doctor does not read runtime evidence with the ingestion token.';
+    public const EVIDENCE_INSTRUCTION = 'Look up the latest accepted run from Workspace integration or the management API. The doctor does not read runtime evidence with the ingestion token.';
 
     public function __construct(
         private readonly MonitorDefinitionPayload $payloads,
@@ -182,7 +182,15 @@ final class ActivationDoctor
         }
 
         if ($runtimeQueues === []) {
-            return new DoctorCheck('queue', DoctorCheckStatus::Pass, 'no runtime queue allowlist is configured');
+            $unlistedFailureReporting = config('latidoflow.queue_unlisted_failures.enabled', false) === true
+                ? 'enabled'
+                : 'disabled';
+
+            return new DoctorCheck(
+                'queue',
+                DoctorCheckStatus::Pass,
+                'no runtime queue allowlist is configured; unlisted queue-failure reporting is '.$unlistedFailureReporting,
+            );
         }
 
         $usesSyncDriver = false;

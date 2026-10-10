@@ -6,8 +6,8 @@ The background-schedule behavior described below is implemented in the current r
 
 ## Requirements
 
-- PHP 8.3 or later
-- Laravel 13
+- PHP 8.2 or later
+- Laravel 12 or 13
 - A LatidoFlow workspace integration token
 
 ## Installation
@@ -15,7 +15,7 @@ The background-schedule behavior described below is implemented in the current r
 Install the package and publish its configuration:
 
 ```bash
-composer require latidoflow/laravel:v1.2.0
+composer require latidoflow/laravel:v1.3.0
 php artisan latidoflow:install
 ```
 
@@ -128,6 +128,16 @@ Queue reporting is opt-in. Publish the configuration and allowlist an exact job 
 ```
 
 Only one exact matching definition is accepted for a job. Matching uses Laravel's queued job class, so a custom `displayName()` does not break the allowlist. Broad or ambiguous automatic monitoring is intentionally rejected. Runtime reporting is intended for deliberately selected, business-critical workloads rather than unrestricted high-volume queue telemetry.
+
+To report failures from queued job classes that are not in the runtime allowlist, enable the aggregate failure monitor:
+
+```dotenv
+LATIDOFLOW_REPORT_UNLISTED_JOB_FAILURES=true
+```
+
+When enabled, the package synchronizes one `Unlisted failed jobs` aggregate monitor for the application and environment. Each unlisted failure becomes its own failed-run occurrence on that monitor. Resolve those occurrences through the normal retry, acknowledge, or manual resolution paths. Missing-run and timeout evaluation do not apply to this failures-only monitor. An accepted `start` whose `fail` event never arrives remains an in-progress run and opens no incident because timeout evaluation is skipped.
+
+The aggregate path sends the job class, connection, queue, attempt number, and exception class. Job and exception details are class names only; serialized payloads, job data, and exception messages are never sent. Jobs whose class appears in a runtime-enabled allowlist definition continue to use the allowlisted behavior and are never reported to the aggregate monitor, regardless of connection or queue.
 
 Automatic releases and retries remain part of the same monitored run. When `queue:retry` replays a terminal failed job, the package adds a fresh random run identity to that failed payload before Laravel pushes it back to the queue. This prevents the replay from being mistaken for the already-terminal run while leaving the job UUID and serialized command unchanged.
 
@@ -259,6 +269,7 @@ Important environment variables:
 | `LATIDOFLOW_ALLOW_INSECURE_HTTP` | Permit plain HTTP only for isolated local development | `false` |
 | `LATIDOFLOW_PROJECT_SLUG` | Stable project identifier | derived from `APP_NAME` |
 | `LATIDOFLOW_CACHE_STORE` | Cache store used for bounded runtime output and semantic evidence | Laravel default cache store |
+| `LATIDOFLOW_REPORT_UNLISTED_JOB_FAILURES` | Report non-allowlisted queue failures to one failures-only aggregate monitor | `false` |
 
 Definition synchronization and workload runtime reporting use separate HTTP profiles in `config/latidoflow.php`:
 
@@ -290,7 +301,7 @@ Omit `config:cache` when the deployment intentionally runs without cached config
 The doctor command requires version v1.1.0 or later. Before upgrading, retain the application's committed `composer.json` and `composer.lock`, and a protected copy of its customer-owned `config/latidoflow.php`. Never put an environment file or configuration cache containing credentials into a release artifact.
 
 ```bash
-composer require latidoflow/laravel:v1.2.0 --no-interaction
+composer require latidoflow/laravel:v1.3.0 --no-interaction
 php artisan latidoflow:install --no-interaction
 php artisan config:clear
 php artisan latidoflow:doctor --skip-sync --no-interaction
@@ -337,7 +348,7 @@ composer lint
 composer audit
 ```
 
-Tests prevent stray HTTP requests and load the service provider through Orchestra Testbench. CI also installs the distribution archive without symlinks into a clean Laravel 13 application and verifies package discovery, all four Artisan commands, non-destructive configuration publication, doctor health and definition sync, and scheduler and queue lifecycle reporting against a local fixture server. This fixture does not prove hosted-service acceptance.
+Tests prevent stray HTTP requests and load the service provider through Orchestra Testbench. CI also installs the distribution archive without symlinks into clean Laravel 12 and 13 applications and verifies package discovery, all four Artisan commands, non-destructive configuration publication, doctor health and definition sync, and scheduler and queue lifecycle reporting against a local fixture server. This fixture does not prove hosted-service acceptance.
 
 See the [contributing guide](https://github.com/Elvesora/latidoflow-laravel/blob/main/CONTRIBUTING.md) for the release checks and publication procedure. Static analysis is not a release gate in this package; no static-analysis tool is configured.
 

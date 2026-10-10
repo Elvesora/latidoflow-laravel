@@ -18,7 +18,7 @@ use Throwable;
 
 final class QueueLifecycleReporter
 {
-    private const string RUN_UUID_PAYLOAD_KEY = 'latidoflow_run_uuid';
+    private const RUN_UUID_PAYLOAD_KEY = 'latidoflow_run_uuid';
 
     public function __construct(
         private readonly LatidoFlowClient $client,
@@ -144,12 +144,66 @@ final class QueueLifecycleReporter
         $this->cleanup($execution);
     }
 
+    private function reportUnlistedFailure(JobFailed $event): void
+    {
+        if (! $this->enabled()
+            || config('latidoflow.queue_unlisted_failures.enabled', false) !== true) {
+            return;
+        }
+
+        $this->safely(function () use ($event): void {
+            $jobClass = $event->job->resolveQueuedJobClass();
+
+            if (! is_string($jobClass)
+                || $jobClass === ''
+                || $this->identities->isAllowlistedJobClass($jobClass)) {
+                return;
+            }
+
+            $connection = $event->connectionName;
+            $queue = $event->job->getQueue() ?: 'default';
+            $attempt = $event->job->attempts();
+            $runUuid = $this->identities->freshRunUuid();
+            $idempotencyKey = 'laravel-queue-unlisted:'.$runUuid;
+            $occurredAt = now()->toIso8601String();
+
+            $this->client->start($this->identities->unlistedQueueFailureReference(), [
+                'run_uuid' => $runUuid,
+                'idempotency_key' => $idempotencyKey,
+                'source' => 'laravel_queue',
+                'queue_connection' => $connection,
+                'queue_name' => $queue,
+                'occurred_at' => $occurredAt,
+                'metadata' => [
+                    'job_class' => $jobClass,
+                    'connection' => $connection,
+                    'queue' => $queue,
+                    'attempt' => $attempt,
+                ],
+            ]);
+            $this->client->fail($runUuid, [
+                'event_idempotency_key' => $idempotencyKey.':failed',
+                'source' => 'laravel_queue',
+                'occurred_at' => $occurredAt,
+                'message' => 'Laravel queue job failed: '.class_basename($event->exception),
+                'metadata' => [
+                    'job_class' => $jobClass,
+                    'connection' => $connection,
+                    'queue' => $queue,
+                    'exception_class' => get_class($event->exception),
+                ],
+            ]);
+        });
+    }
+
     public function failed(JobFailed $event): void
     {
         $execution = $this->executionForJob($event->job)
             ?? $this->execution($event->connectionName, $event->job);
 
         if (! is_array($execution)) {
+            $this->reportUnlistedFailure($event);
+
             return;
         }
 

@@ -145,6 +145,30 @@ class MonitorDefinitionTest extends TestCase
         $this->syncPayload(new Schedule('UTC'));
     }
 
+    public function test_unlisted_queue_failure_definition_is_opt_in_and_uses_default_timing(): void
+    {
+        config()->set('latidoflow.queues', []);
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+        config()->set('latidoflow.queue_unlisted_failures.name', 'Aggregate queue failures');
+        config()->set('latidoflow.defaults.check_interval_minutes', 15);
+        config()->set('latidoflow.defaults.timeout_seconds', 900);
+
+        $payload = $this->syncPayload(new Schedule('UTC'));
+
+        $this->assertSame([[
+            'name' => 'Aggregate queue failures',
+            'slug' => 'unlisted-failed-jobs',
+            'type' => 'heartbeat',
+            'check_interval_minutes' => 15,
+            'timeout_seconds' => 900,
+            'metadata' => [
+                'source' => 'laravel-queue',
+                'source_kind' => 'queue_failures',
+                'runtime_reporting' => 'failures_only',
+            ],
+        ]], $payload['monitors']);
+    }
+
     public function test_schedule_specific_timezone_is_preserved(): void
     {
         $schedule = new Schedule('UTC');
@@ -374,6 +398,23 @@ class MonitorDefinitionTest extends TestCase
         $schedule = new Schedule('UTC');
 
         foreach (range(1, 101) as $monitorNumber) {
+            $schedule->command("reports:monitor-{$monitorNumber}")
+                ->daily()
+                ->description("Monitor {$monitorNumber}");
+        }
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('at most 100 definitions');
+
+        $this->syncPayload($schedule);
+    }
+
+    public function test_unlisted_failure_definition_participates_in_monitor_count_validation(): void
+    {
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+        $schedule = new Schedule('UTC');
+
+        foreach (range(1, 100) as $monitorNumber) {
             $schedule->command("reports:monitor-{$monitorNumber}")
                 ->daily()
                 ->description("Monitor {$monitorNumber}");

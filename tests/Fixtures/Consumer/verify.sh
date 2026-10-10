@@ -10,7 +10,8 @@ if [[ -z "$archive" || ! -f "$archive" ]]; then
 fi
 
 fixture_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-temporary_root="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+mkdir -p "${LATIDOFLOW_FIXTURE_TMP:-$PWD/.tmp}"
+temporary_root="$(cd "${LATIDOFLOW_FIXTURE_TMP:-$PWD/.tmp}" && pwd -P)"
 package_directory="$(mktemp -d "${temporary_root}/latidoflow-package.XXXXXX")"
 consumer_directory="$(mktemp -d "${temporary_root}/latidoflow-consumer.XXXXXX")"
 server_pid=''
@@ -89,7 +90,7 @@ trap cleanup EXIT
 
 unzip -q "$archive" -d "$package_directory"
 
-composer create-project laravel/laravel:^13.0 "$consumer_directory" --no-interaction --prefer-dist --no-progress
+composer create-project "laravel/laravel:${LARAVEL_VERSION:-^13.0}" "$consumer_directory" --no-interaction --prefer-dist --no-progress
 
 composer_package_directory="$package_directory"
 

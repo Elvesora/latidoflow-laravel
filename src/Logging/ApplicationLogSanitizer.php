@@ -8,7 +8,8 @@ use Throwable;
 
 final class ApplicationLogSanitizer
 {
-    private const array SECRET_PATTERNS = [
+    /** @var list<string> */
+    private const SECRET_PATTERNS = [
         'authorization',
         'password',
         'passwd',

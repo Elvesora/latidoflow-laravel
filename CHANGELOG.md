@@ -6,6 +6,18 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 The entries below describe the current repository source; they do not claim that a tagged or published package release already contains unreleased changes.
 
+## v1.3.0 - 2026-10-10
+
+### Added
+
+- Laravel 12 support alongside Laravel 13.
+- PHP 8.2 as the minimum supported runtime.
+- An opt-in aggregate monitor for failures from queued job classes outside the runtime allowlist.
+
+### Changed
+
+- Expanded CI coverage across PHP 8.2 through 8.5, Laravel 12 and 13, lowest and highest dependency sets, and clean consumer installations for both supported Laravel majors.
+
 ## v1.2.0 - 2026-10-04
 
 ### Added

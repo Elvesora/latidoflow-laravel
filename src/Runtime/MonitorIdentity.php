@@ -62,7 +62,7 @@ final class MonitorIdentity
     {
         $name = (string) ($definition['name'] ?? 'Unnamed Laravel queue job');
         $jobClass = is_string($definition['job_class'] ?? null)
-            ? trim($definition['job_class'])
+            ? $this->normalizeJobClass($definition['job_class'])
             : '';
         $slug = Str::slug($name);
         $automatic = ($definition['runtime_reporting'] ?? false) === true
@@ -106,19 +106,40 @@ final class MonitorIdentity
     }
 
     /**
+     * @return array{project_slug: string, environment_slug: string, monitor_slug: string}
+     */
+    public function unlistedQueueFailureReference(): array
+    {
+        return $this->reference('unlisted-failed-jobs');
+    }
+
+    public function isAllowlistedJobClass(string $jobClass): bool
+    {
+        $normalizedJobClass = $this->normalizeJobClass($jobClass);
+
+        return collect(config('latidoflow.queues', []))
+            ->contains(fn (mixed $definition): bool => is_array($definition)
+                && ($definition['runtime_reporting'] ?? false) === true
+                && is_string($definition['job_class'] ?? null)
+                && $this->normalizeJobClass($definition['job_class']) === $normalizedJobClass);
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     public function matchingQueue(string $connection, ?string $queue, string $jobClass): ?array
     {
+        $normalizedJobClass = $this->normalizeJobClass($jobClass);
+
         $matches = collect(config('latidoflow.queues', []))
-            ->filter(function (mixed $definition) use ($connection, $queue, $jobClass): bool {
+            ->filter(function (mixed $definition) use ($connection, $queue, $normalizedJobClass): bool {
                 if (! is_array($definition)) {
                     return false;
                 }
 
                 $identity = $this->queue($definition);
 
-                if (! $identity['automatic'] || data_get($identity, 'metadata.job_class') !== $jobClass) {
+                if (! $identity['automatic'] || data_get($identity, 'metadata.job_class') !== $normalizedJobClass) {
                     return false;
                 }
 
@@ -131,5 +152,10 @@ final class MonitorIdentity
             ->values();
 
         return $matches->count() === 1 ? $matches->first() : null;
+    }
+
+    private function normalizeJobClass(string $jobClass): string
+    {
+        return ltrim(trim($jobClass), '\\');
     }
 }

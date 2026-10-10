@@ -10,19 +10,19 @@ use Throwable;
 
 final class OutputStore
 {
-    public const int MAX_METRICS = 20;
+    public const MAX_METRICS = 20;
 
-    public const int MAX_EVIDENCE_BYTES = 16 * 1024;
+    public const MAX_EVIDENCE_BYTES = 16 * 1024;
 
-    public const int MAX_EVIDENCE_DEPTH = 8;
+    public const MAX_EVIDENCE_DEPTH = 8;
 
-    public const int MAX_EVIDENCE_NODES = 64;
+    public const MAX_EVIDENCE_NODES = 64;
 
-    public const int MAX_EVIDENCE_STRING_BYTES = 2048;
+    public const MAX_EVIDENCE_STRING_BYTES = 2048;
 
-    public const int MAX_EVIDENCE_KEY_BYTES = 64;
+    public const MAX_EVIDENCE_KEY_BYTES = 64;
 
-    private const string METRIC_PATTERN = '/\A[a-zA-Z][a-zA-Z0-9_.-]{0,63}\z/';
+    private const METRIC_PATTERN = '/\A[a-zA-Z][a-zA-Z0-9_.-]{0,63}\z/';
 
     /** @var array<string, true> */
     private array $failedReads = [];

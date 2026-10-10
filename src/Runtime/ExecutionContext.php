@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Context;
 
 final class ExecutionContext
 {
-    private const string CONTEXT_KEY = 'latidoflow.runtime.executions';
+    private const CONTEXT_KEY = 'latidoflow.runtime.executions';
 
     /**
      * @param  array<string, mixed>  $execution

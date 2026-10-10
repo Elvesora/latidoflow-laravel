@@ -27,14 +27,25 @@ class PackageMetadataTest extends TestCase
             'https://github.com/Elvesora/latidoflow-laravel',
             $composer['support']['source'],
         );
-        $this->assertSame('^8.3', $composer['require']['php']);
+        $this->assertSame('^8.2', $composer['require']['php']);
         $this->assertSame('src/', $composer['autoload']['psr-4']['LatidoFlow\\Laravel\\']);
         $this->assertSame('tests/', $composer['autoload-dev']['psr-4']['LatidoFlow\\Laravel\\Tests\\']);
         $this->assertSame(
             [LatidoFlowServiceProvider::class],
             $composer['extra']['laravel']['providers'],
         );
-        $this->assertArrayHasKey('illuminate/queue', $composer['require']);
+        foreach ([
+            'illuminate/cache',
+            'illuminate/console',
+            'illuminate/contracts',
+            'illuminate/http',
+            'illuminate/log',
+            'illuminate/queue',
+            'illuminate/support',
+        ] as $illuminatePackage) {
+            $this->assertSame('^12.0|^13.0', $composer['require'][$illuminatePackage]);
+        }
+
         $this->assertArrayHasKey('orchestra/testbench', $composer['require-dev']);
         $this->assertArrayHasKey('phpunit/phpunit', $composer['require-dev']);
     }
