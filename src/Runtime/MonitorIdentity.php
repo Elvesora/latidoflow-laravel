@@ -80,6 +80,7 @@ final class MonitorIdentity
                 'connection' => $definition['connection'] ?? config('queue.default'),
                 'queue' => $definition['queue'] ?? 'default',
                 'job_class' => $jobClass !== '' ? $jobClass : null,
+                'expect_recurring_runs' => $definition['expect_recurring_runs'] ?? true,
                 'start_timeout_seconds' => max(
                     1,
                     (int) ($definition['start_timeout_seconds'] ?? config('latidoflow.defaults.queue_start_timeout_seconds', 300)),

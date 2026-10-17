@@ -3,6 +3,7 @@
 namespace LatidoFlow\Laravel\Tests\Feature;
 
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\Http;
 use LatidoFlow\Laravel\Runtime\MonitorDefinitionPayload;
 use LatidoFlow\Laravel\Tests\TestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -71,6 +72,7 @@ class MonitorDefinitionTest extends TestCase
         $this->assertSame('invoices', $queue['metadata']['queue']);
         $this->assertSame('automatic', $queue['metadata']['runtime_reporting']);
         $this->assertSame(300, $queue['metadata']['start_timeout_seconds']);
+        $this->assertTrue($queue['metadata']['expect_recurring_runs']);
         $this->assertSame([], $queue['output_assertions']);
         $this->assertSame(2, $queue['alert_truth']['failure_threshold']);
         $this->assertSame(3, $queue['alert_truth']['sample_size']);
@@ -262,6 +264,59 @@ class MonitorDefinitionTest extends TestCase
         $this->expectExceptionMessage('requires job_class');
 
         $this->syncPayload(new Schedule('UTC'));
+    }
+
+    public function test_event_driven_queue_definition_preserves_an_explicit_false_recurring_expectation(): void
+    {
+        config()->set('latidoflow.queues', [[
+            'name' => 'Payment confirmations',
+            'connection' => 'database',
+            'queue' => 'default',
+            'job_class' => 'App\\Listeners\\SendPaymentConfirmation',
+            'runtime_reporting' => true,
+            'expect_recurring_runs' => false,
+        ]]);
+
+        $monitor = $this->syncPayload(new Schedule('UTC'))['monitors'][0];
+
+        $this->assertFalse($monitor['metadata']['expect_recurring_runs']);
+        $this->assertSame(300, $monitor['metadata']['start_timeout_seconds']);
+        $this->assertSame('queue', $monitor['metadata']['source_kind']);
+    }
+
+    #[DataProvider('invalidRecurringExpectationProvider')]
+    public function test_queue_recurring_expectation_rejects_non_boolean_values_before_http(mixed $value): void
+    {
+        Http::preventStrayRequests();
+        Http::fake();
+        config()->set('latidoflow.queues', [[
+            'name' => 'Payment confirmations',
+            'expect_recurring_runs' => $value,
+        ]]);
+
+        try {
+            $this->artisan('latidoflow:sync')->run();
+            $this->fail('A non-boolean recurring expectation must be rejected.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('Queue expect_recurring_runs must be a boolean.', $exception->getMessage());
+        }
+
+        Http::assertNothingSent();
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function invalidRecurringExpectationProvider(): array
+    {
+        return [
+            'null' => [null],
+            'string false' => ['false'],
+            'string true' => ['true'],
+            'zero' => [0],
+            'one' => [1],
+            'array' => [[]],
+        ];
     }
 
     public function test_duplicate_runtime_queue_mappings_are_rejected_even_when_monitor_names_differ(): void

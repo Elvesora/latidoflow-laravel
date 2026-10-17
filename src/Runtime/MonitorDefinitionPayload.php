@@ -127,6 +127,10 @@ final class MonitorDefinitionPayload
      */
     private function queueMonitor(array $queue): array
     {
+        if (array_key_exists('expect_recurring_runs', $queue) && ! is_bool($queue['expect_recurring_runs'])) {
+            throw new RuntimeException('Queue expect_recurring_runs must be a boolean.');
+        }
+
         $queue['start_timeout_seconds'] = $this->boundedInteger(
             $queue['start_timeout_seconds'] ?? config('latidoflow.defaults.queue_start_timeout_seconds', 300),
             'queue start_timeout_seconds',

@@ -2,7 +2,7 @@
 
 `latidoflow/laravel` reports evidence from safely named Laravel schedules and explicitly allowlisted queue jobs to LatidoFlow. It synchronizes heartbeat definitions, reports supported lifecycle state, and can attach bounded numeric business-output metrics or typed semantic evidence without sending command arguments, serialized job payloads, exception text, or response bodies.
 
-The background-schedule behavior described below is implemented in the current repository source. It does not claim support in a tagged or published package release until that source is released.
+The background-schedule behavior, exact queued-listener matching, and event-driven queue expectations described below are implemented in the current repository source. They do not claim support in a tagged or published package release until that source is released.
 
 ## Requirements
 
@@ -12,10 +12,10 @@ The background-schedule behavior described below is implemented in the current r
 
 ## Installation
 
-Install the package and publish its configuration:
+The commands below target v1.4.0; run them after that version is published on Packagist. Install the package and publish its configuration:
 
 ```bash
-composer require latidoflow/laravel:v1.3.0
+composer require latidoflow/laravel:v1.4.0
 php artisan latidoflow:install
 ```
 
@@ -128,6 +128,33 @@ Queue reporting is opt-in. Publish the configuration and allowlist an exact job 
 ```
 
 Only one exact matching definition is accepted for a job. Matching uses Laravel's queued job class, so a custom `displayName()` does not break the allowlist. Broad or ambiguous automatic monitoring is intentionally rejected. Runtime reporting is intended for deliberately selected, business-critical workloads rather than unrestricted high-volume queue telemetry.
+
+For a queued event listener, allowlist the listener class itself, such as `App\Listeners\SendPaymentConfirmation::class`. The adapter recognizes Laravel's `CallQueuedListener` wrapper and keeps the same listener identity during dispatch, execution, retries, and failure reporting. Allowlisting the shared wrapper does not opt every listener into monitoring.
+
+For work triggered by irregular events, disable the expectation of another periodic run on that queue definition:
+
+```php
+'queues' => [
+    [
+        'name' => 'Payment confirmation',
+        'connection' => 'database',
+        'queue' => 'default',
+        'job_class' => App\Listeners\SendPaymentConfirmation::class,
+        'runtime_reporting' => true,
+        'expect_recurring_runs' => false,
+        'start_timeout_seconds' => 300,
+        'timeout_seconds' => 120,
+    ],
+],
+```
+
+`expect_recurring_runs` must be a boolean. Omitted or `true` preserves periodic monitoring. With `false`, the synchronized queue heartbeat has no next expected run: no new payment means no `missing_run`. Already queued jobs still have a start deadline, and started jobs still have their runtime timeout. Changing this setting does not resolve existing incidents or prove recovery; duplicate-run checks are unchanged.
+
+Run `latidoflow:sync --dry-run`, then `latidoflow:sync` after changing the definition. Queue-start evaluation requires a real accepted `queued` signal and uses the dispatch delay plus `start_timeout_seconds`. A late worker can start the same run and a later valid completion can recover it. The lifecycle request is sent directly from the process dispatching the job, so a web request can report it even if the application's cron and worker never start. The hosted evaluator and notification workers must still be healthy, and an enabled notification destination must match the incident.
+
+To check one payment-confirmation job, dispatch a safe test payment event with the worker stopped, verify the accepted run UUID and queued state, and wait through its delay plus start SLA for one `queue_wait_timeout` incident and the configured notification. Then process that job and verify the same run starts and recovers after valid completion. Leave the queue idle beyond its former interval and grace window to confirm that no `missing_run` opens. Use test payment data and a test mail destination.
+
+The adapter does not scan jobs that were queued before installation. Runtime HTTP transport fails open and has no durable replay; a lost queued signal cannot establish a never-started job. An absent start signal is evidence of no observed start, not proof that the worker process never ran. Successful telemetry acceptance is not confirmation that the payment email reached its recipient.
 
 To report failures from queued job classes that are not in the runtime allowlist, enable the aggregate failure monitor:
 
@@ -301,7 +328,7 @@ Omit `config:cache` when the deployment intentionally runs without cached config
 The doctor command requires version v1.1.0 or later. Before upgrading, retain the application's committed `composer.json` and `composer.lock`, and a protected copy of its customer-owned `config/latidoflow.php`. Never put an environment file or configuration cache containing credentials into a release artifact.
 
 ```bash
-composer require latidoflow/laravel:v1.3.0 --no-interaction
+composer require latidoflow/laravel:v1.4.0 --no-interaction
 php artisan latidoflow:install --no-interaction
 php artisan config:clear
 php artisan latidoflow:doctor --skip-sync --no-interaction
@@ -349,6 +376,16 @@ composer audit
 ```
 
 Tests prevent stray HTTP requests and load the service provider through Orchestra Testbench. CI also installs the distribution archive without symlinks into clean Laravel 12 and 13 applications and verifies package discovery, all four Artisan commands, non-destructive configuration publication, doctor health and definition sync, and scheduler and queue lifecycle reporting against a local fixture server. This fixture does not prove hosted-service acceptance.
+
+Verify the exact candidate archive locally with Bash, PHP, Composer, curl, and unzip:
+
+```bash
+composer archive --format=zip --dir=.build/release-v1.4.0 --file=latidoflow-laravel-v1.4.0
+LARAVEL_VERSION='^12.0' bash tests/Fixtures/Consumer/verify.sh .build/release-v1.4.0/latidoflow-laravel-v1.4.0.zip
+LARAVEL_VERSION='^13.0' bash tests/Fixtures/Consumer/verify.sh .build/release-v1.4.0/latidoflow-laravel-v1.4.0.zip
+```
+
+After publication, separately verify a fresh version-pinned Composer installation and a newly accepted hosted run using the contributing guide. A passing archive fixture does not establish either result.
 
 See the [contributing guide](https://github.com/Elvesora/latidoflow-laravel/blob/main/CONTRIBUTING.md) for the release checks and publication procedure. Static analysis is not a release gate in this package; no static-analysis tool is configured.
 

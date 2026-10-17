@@ -3,6 +3,7 @@
 namespace LatidoFlow\Laravel\Runtime;
 
 use Illuminate\Contracts\Queue\Job;
+use Illuminate\Events\CallQueuedListener;
 use Illuminate\Queue\Events\JobAttempted;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
@@ -35,10 +36,13 @@ final class QueueLifecycleReporter
 
         $this->safely(function () use ($event): void {
             $payload = $event->payload();
-            $jobClass = is_string(data_get($payload, 'data.commandName'))
-                ? data_get($payload, 'data.commandName')
-                : '';
+            $jobClass = $this->jobClass($payload, dispatchedJob: $event->job);
             $jobUuid = is_string($payload['uuid'] ?? null) ? $payload['uuid'] : '';
+
+            if ($jobClass === null) {
+                return;
+            }
+
             $definition = $this->identities->matchingQueue(
                 (string) $event->connectionName,
                 $event->queue,
@@ -152,7 +156,7 @@ final class QueueLifecycleReporter
         }
 
         $this->safely(function () use ($event): void {
-            $jobClass = $event->job->resolveQueuedJobClass();
+            $jobClass = $this->jobClass($event->job->payload(), $event->job->resolveQueuedJobClass());
 
             if (! is_string($jobClass)
                 || $jobClass === ''
@@ -253,9 +257,7 @@ final class QueueLifecycleReporter
 
         $this->safely(function () use ($event): void {
             $payload = $event->payload();
-            $jobClass = is_string(data_get($payload, 'data.commandName'))
-                ? data_get($payload, 'data.commandName')
-                : '';
+            $jobClass = $this->jobClass($payload);
             $connection = is_string($event->job->connection ?? null)
                 ? $event->job->connection
                 : '';
@@ -263,7 +265,7 @@ final class QueueLifecycleReporter
                 ? $event->job->queue
                 : 'default';
 
-            if (! is_array($payload)
+            if ($jobClass === null
                 || ! is_array($this->identities->matchingQueue($connection, $queue, $jobClass))) {
                 return;
             }
@@ -296,7 +298,7 @@ final class QueueLifecycleReporter
             ? $payload[self::RUN_UUID_PAYLOAD_KEY]
             : null;
         $runUuid = Str::isUuid($requestedRunUuid) ? $requestedRunUuid : $jobUuid;
-        $jobClass = $job->resolveQueuedJobClass();
+        $jobClass = $this->jobClass($payload, $job->resolveQueuedJobClass());
         $queue = $job->getQueue() ?: 'default';
 
         if (! is_string($jobUuid) || ! Str::isUuid($runUuid) || ! is_string($jobClass)) {
@@ -415,6 +417,34 @@ final class QueueLifecycleReporter
     {
         return (bool) config('latidoflow.runtime.enabled', true)
             && filled(config('latidoflow.token'));
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function jobClass(array $payload, ?string $resolvedClass = null, mixed $dispatchedJob = null): ?string
+    {
+        $jobClass = $resolvedClass ?? data_get($payload, 'data.commandName');
+
+        if (! is_string($jobClass) || $jobClass === '') {
+            return null;
+        }
+
+        if ($jobClass !== CallQueuedListener::class) {
+            return $jobClass;
+        }
+
+        $listenerClass = $dispatchedJob === null
+            ? ($payload['displayName'] ?? null)
+            : ($dispatchedJob instanceof CallQueuedListener ? $dispatchedJob->class : null);
+
+        if (! is_string($listenerClass)) {
+            return null;
+        }
+
+        $listenerClass = ltrim(trim($listenerClass), '\\');
+
+        return $listenerClass !== '' && $listenerClass !== CallQueuedListener::class ? $listenerClass : null;
     }
 
     private function isSynchronousConnection(string $connection): bool

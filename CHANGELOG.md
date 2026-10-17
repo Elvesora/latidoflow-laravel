@@ -6,6 +6,20 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 The entries below describe the current repository source; they do not claim that a tagged or published package release already contains unreleased changes.
 
+## v1.4.0 - 2026-10-17
+
+### Added
+
+- Optional boolean `expect_recurring_runs` on queue definitions. It defaults to `true`; setting it to `false` disables periodic missing-run expectations while preserving queue-start and runtime deadlines.
+
+### Fixed
+
+- Match queued event listeners by their exact listener class through Laravel's `CallQueuedListener` wrapper during dispatch, execution, retries, and failure reporting. A payment request can report a pending allowlisted listener before any worker starts.
+
+### Changed
+
+- Allowlisting the shared `Illuminate\Events\CallQueuedListener` wrapper no longer monitors every listener. Configure each intended listener class explicitly with its connection and queue.
+
 ## v1.3.0 - 2026-10-10
 
 ### Added

@@ -9,6 +9,7 @@ use Illuminate\Console\Events\ScheduledTaskSkipped;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Queue\Job;
+use Illuminate\Events\CallQueuedListener;
 use Illuminate\Http\Client\Response;
 use Illuminate\Queue\Console\RetryCommand;
 use Illuminate\Queue\Events\JobAttempted;
@@ -38,6 +39,7 @@ use LatidoFlow\Laravel\Runtime\QueueLifecycleReporter;
 use LatidoFlow\Laravel\Runtime\SchedulerLifecycleReporter;
 use LatidoFlow\Laravel\Tests\TestCase;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -431,6 +433,138 @@ class RuntimeReporterTest extends TestCase
         $this->assertSame('timed_out', data_get($client->calls[1], 'payload.metadata.state'));
         $this->assertNull($contexts->current());
         $this->assertSame([], $outputs->get($jobUuid));
+    }
+
+    public function test_queued_listener_uses_the_dispatch_object_class_instead_of_a_changed_display_name(): void
+    {
+        config()->set('latidoflow.queues.0.job_class', 'App\\Listeners\\SendPaymentConfirmation');
+        [$client, , , $reporter] = $this->queueReporter();
+        $payload = $this->listenerPayload('998825ac-ed50-4573-bcae-bc5edca145cb');
+        $payload['displayName'] = 'App\\Listeners\\AnotherListener';
+
+        $reporter->queued(new JobQueued(
+            'redis',
+            'billing',
+            10,
+            new CallQueuedListener('App\\Listeners\\SendPaymentConfirmation', 'handle', []),
+            json_encode($payload, JSON_THROW_ON_ERROR),
+            60,
+        ));
+
+        $this->assertSame(['queued'], array_column($client->calls, 'type'));
+        $this->assertSame('App\\Listeners\\SendPaymentConfirmation', data_get($client->calls[0], 'payload.metadata.job_class'));
+        $this->assertSame(60, data_get($client->calls[0], 'payload.metadata.queue.delay_seconds'));
+        $this->assertStringNotContainsString('serialized-private-listener-data', json_encode($client->calls, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_queued_listener_retry_and_terminal_failure_keep_the_listener_identity(): void
+    {
+        config()->set('latidoflow.queues.0.job_class', 'App\\Listeners\\SendPaymentConfirmation');
+        [$client, , , $reporter] = $this->queueReporter();
+        $payload = $this->listenerPayload('dc149b5d-1ec7-4c58-b424-37b2d82930b4');
+        $failedJob = (object) [
+            'connection' => 'redis',
+            'queue' => 'billing',
+            'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
+        ];
+
+        $reporter->retryRequested(new JobRetryRequested($failedJob));
+        $retriedPayload = json_decode($failedJob->payload, true, flags: JSON_THROW_ON_ERROR);
+        $this->assertTrue(Str::isUuid($retriedPayload['latidoflow_run_uuid'] ?? null));
+        $this->assertNotSame($payload['uuid'], $retriedPayload['latidoflow_run_uuid']);
+        $this->assertSame($payload['data'], $retriedPayload['data']);
+        $this->assertSame($payload['uuid'], $retriedPayload['uuid']);
+        $job = $this->queueJob($payload['uuid'], payload: $retriedPayload, jobClass: CallQueuedListener::class);
+
+        $reporter->processing(new JobProcessing('redis', $job));
+        $reporter->failed(new JobFailed('redis', $job, new RuntimeException('private-payment-detail')));
+
+        $this->assertSame(['start', 'fail'], array_column($client->calls, 'type'));
+        $this->assertSame($retriedPayload['latidoflow_run_uuid'], data_get($client->calls[0], 'payload.run_uuid'));
+        $this->assertSame($retriedPayload['latidoflow_run_uuid'], data_get($client->calls[1], 'reference.run_uuid'));
+        $this->assertSame('App\\Listeners\\SendPaymentConfirmation', data_get($client->calls[1], 'payload.metadata.job_class'));
+        $serializedCalls = json_encode($client->calls, JSON_THROW_ON_ERROR);
+        $this->assertStringNotContainsString('serialized-private-listener-data', $serializedCalls);
+        $this->assertStringNotContainsString('private-payment-detail', $serializedCalls);
+    }
+
+    public function test_unlisted_failure_reporting_uses_the_listener_class_and_respects_its_allowlist(): void
+    {
+        config()->set('latidoflow.queues.0.job_class', 'App\\Listeners\\SendPaymentConfirmation');
+        config()->set('latidoflow.queues.0.queue', 'another-queue');
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+        [$client, , , $reporter] = $this->queueReporter();
+        $payload = $this->listenerPayload('d076a306-2979-4fdb-a8c6-5ad55a7c07de');
+        $job = $this->queueJob($payload['uuid'], payload: $payload, jobClass: CallQueuedListener::class);
+
+        $reporter->failed(new JobFailed('redis', $job, new RuntimeException('allowlisted on another queue')));
+
+        $this->assertSame([], $client->calls);
+        $payload['displayName'] = 'App\\Listeners\\AnotherListener';
+        $unlistedJob = $this->queueJob($payload['uuid'], payload: $payload, jobClass: CallQueuedListener::class);
+
+        $reporter->failed(new JobFailed('redis', $unlistedJob, new RuntimeException('private-payment-detail')));
+
+        $this->assertSame(['start', 'fail'], array_column($client->calls, 'type'));
+        $this->assertSame('unlisted-failed-jobs', data_get($client->calls[0], 'reference.monitor_slug'));
+        $this->assertSame('App\\Listeners\\AnotherListener', data_get($client->calls[0], 'payload.metadata.job_class'));
+        $this->assertSame('App\\Listeners\\AnotherListener', data_get($client->calls[1], 'payload.metadata.job_class'));
+    }
+
+    #[DataProvider('invalidListenerClassProvider')]
+    public function test_malformed_listener_wrapper_never_falls_back_to_a_broad_wrapper_allowlist(mixed $listenerClass): void
+    {
+        config()->set('latidoflow.queues.0.job_class', CallQueuedListener::class);
+        config()->set('latidoflow.queue_unlisted_failures.enabled', true);
+        [$client, , , $reporter] = $this->queueReporter();
+        $payload = $this->listenerPayload('4d43be33-2077-40e6-b0da-b9f067316b53');
+        $payload['displayName'] = $listenerClass;
+        $encodedPayload = json_encode($payload, JSON_THROW_ON_ERROR);
+
+        $reporter->queued(new JobQueued(
+            'redis', 'billing', 10, new CallQueuedListener($listenerClass, 'handle', []), $encodedPayload, 0,
+        ));
+        $job = $this->queueJob($payload['uuid'], payload: $payload, jobClass: CallQueuedListener::class);
+        $reporter->processing(new JobProcessing('redis', $job));
+        $reporter->failed(new JobFailed('redis', $job, new RuntimeException('private failure')));
+        $failedJob = (object) ['connection' => 'redis', 'queue' => 'billing', 'payload' => $encodedPayload];
+        $reporter->retryRequested(new JobRetryRequested($failedJob));
+
+        $this->assertSame([], $client->calls);
+        $this->assertSame($encodedPayload, $failedJob->payload);
+    }
+
+    /**
+     * @return array<string, array{0: mixed}>
+     */
+    public static function invalidListenerClassProvider(): array
+    {
+        return [
+            'missing class' => [null],
+            'array class' => [[]],
+            'integer class' => [123],
+            'empty class' => [''],
+            'blank class' => [' '],
+            'wrapper class' => [CallQueuedListener::class],
+            'normalized wrapper class' => [' \\'.CallQueuedListener::class.' '],
+        ];
+    }
+
+    public function test_allowlisting_the_listener_wrapper_does_not_monitor_every_listener(): void
+    {
+        config()->set('latidoflow.queues.0.job_class', CallQueuedListener::class);
+        [$client, , , $reporter] = $this->queueReporter();
+        $payload = $this->listenerPayload('fcffdf88-657f-422f-9754-1c01c153825e');
+        $reporter->queued(new JobQueued(
+            'redis', 'billing', 10,
+            new CallQueuedListener($payload['displayName'], 'handle', []),
+            json_encode($payload, JSON_THROW_ON_ERROR), 0,
+        ));
+        $reporter->processing(new JobProcessing(
+            'redis', $this->queueJob($payload['uuid'], payload: $payload, jobClass: CallQueuedListener::class),
+        ));
+
+        $this->assertSame([], $client->calls);
     }
 
     public function test_async_queue_processing_does_not_inherit_a_parent_execution_context(): void
@@ -986,6 +1120,7 @@ class RuntimeReporterTest extends TestCase
 
         $this->assertTrue($events->hasListeners(ScheduledTaskStarting::class));
         $this->assertTrue($events->hasListeners(ScheduledBackgroundTaskFinished::class));
+        $this->assertTrue($events->hasListeners(JobQueued::class));
         $this->assertTrue($events->hasListeners(JobProcessing::class));
         $this->assertTrue($events->hasListeners(JobAttempted::class));
         $this->assertTrue($events->hasListeners(JobRetryRequested::class));
@@ -1030,6 +1165,21 @@ class RuntimeReporterTest extends TestCase
             $contexts,
             $outputs,
             new QueueLifecycleReporter($client, new MonitorIdentity, $contexts, $outputs),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function listenerPayload(string $uuid): array
+    {
+        return [
+            'uuid' => $uuid,
+            'displayName' => 'App\\Listeners\\SendPaymentConfirmation',
+            'data' => [
+                'commandName' => CallQueuedListener::class,
+                'command' => 'serialized-private-listener-data',
+            ],
         ];
     }
 
